@@ -15,7 +15,18 @@ env = { NIM_API_KEY_FILE = "/home/you/.secrets/nvidia-key" }
 # env = { NIM_API_KEY = "nvapi-..." }
 
 startup_timeout_sec = 20
-tool_timeout_sec = 900
+tool_timeout_sec = 900   # free_agent can legitimately run for minutes
+
+# Non-interactive runs (codex exec, CI) cannot answer approval prompts.
+# "approve" trusts these tools up front; drop this block if you prefer to be asked.
+[mcp_servers.free-models.tools.free_ask]
+approval_mode = "approve"
+
+[mcp_servers.free-models.tools.free_agent]
+approval_mode = "approve"
+
+[mcp_servers.free-models.tools.free_cascade]
+approval_mode = "approve"
 
 # ---------------------------------------------------------------------------
 # Optional: a paid model profile with low reasoning effort for T1 sessions.

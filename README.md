@@ -109,6 +109,8 @@ tool_timeout_sec = 900
 
 Then add the routing policy from [`routing-policy.md`](mcp/free-models/routing-policy.md) to your `AGENTS.md`. Codex calls `free_ask`, `free_agent`, or `free_cascade` instead of generating routine text itself.
 
+> Non-interactive runs (`codex exec`, CI) cannot answer approval prompts. The example config marks the three tools `approval_mode = "approve"` so they run unattended; remove those blocks if you prefer a prompt.
+
 ### The three tools
 
 | Tool | Use it for | Backend |
