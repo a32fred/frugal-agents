@@ -5,9 +5,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-10-20
+
+### Added
+
+- `stats` reports the number of legacy pre-0.3.0 ledger rows whose usage may be double-counted, instead of silently mixing them with schema-versioned rows.
+
 ## [0.3.0] - 2026-10-20
 
-Hardening release. No new routing features; the goal was to remove defects that made the prototype unsafe to automate.
+Hardening release. No new routing features; the goal was to remove defects that made unattended use unreliable.
 
 ### Added
 
@@ -83,7 +89,8 @@ Hardening release. No new routing features; the goal was to remove defects that 
 - Unit tests (no key required) and a live smoke test.
 - GitHub Actions CI across Python 3.10, 3.12, and 3.13.
 
-[Unreleased]: https://github.com/a32fred/frugal-agents/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/a32fred/frugal-agents/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/a32fred/frugal-agents/releases/tag/v0.3.1
 [0.3.0]: https://github.com/a32fred/frugal-agents/releases/tag/v0.3.0
 [0.2.0]: https://github.com/a32fred/frugal-agents/releases/tag/v0.2.0
 [0.1.0]: https://github.com/a32fred/frugal-agents/releases/tag/v0.1.0

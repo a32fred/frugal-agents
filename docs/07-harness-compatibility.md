@@ -1,6 +1,6 @@
 # Harness compatibility
 
-Last updated: 2026-10-20 · server `0.3.0`
+Last updated: 2026-10-20 · server `0.3.1`
 
 This page separates what has actually been run from what merely looks compatible. Most MCP clients implement the same stdio JSON-RPC transport, but they differ in protocol revision, approval behaviour, environment inheritance and how they render tool results.
 
@@ -269,7 +269,7 @@ Hints are advisory. A harness may still prompt; a non-interactive harness may re
 | Every call times out | client timeout shorter than the chain | raise `tool_timeout_sec`; lower `FRUGAL_TIMEOUT`; reduce `FRUGAL_CHAIN` |
 | `all free models failed` | key invalid, quota exhausted, or catalog rotated | run `server.py doctor`; refresh `FRUGAL_CHAIN` |
 | Free work edits the wrong repository | relative or missing `cwd` | pass an absolute `cwd`; keep `free_agent` behind approval |
-| Stats look inflated | pre-0.3.0 ledger entries recorded generator and judge separately | old entries are not rewritten; compare only entries with `schema_version` 1 |
+| Stats look inflated | pre-0.3.0 ledger entries recorded generator and judge separately | old entries are not rewritten; `stats` prints a legacy-row count; compare entries with `schema_version` 1 |
 
 ## 7. What would make this page stronger
 

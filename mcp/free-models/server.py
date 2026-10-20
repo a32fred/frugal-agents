@@ -53,7 +53,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from typing import Any
 
-VERSION = "0.3.0"
+VERSION = "0.3.1"
 PROTOCOL_VERSION = "2025-11-25"
 
 # Legacy (session) protocol revisions this server can negotiate. The modern
@@ -322,6 +322,7 @@ def compute_stats(
     models = Counter(
         str(row.get("model", "unknown")) for row in rows if row.get("model")
     )
+    legacy_rows = sum(1 for row in rows if "schema_version" not in row)
 
     cascades = [row for row in rows if row.get("tool") == "free_cascade"]
     accepted = sum(1 for row in cascades if row.get("accepted") is True)
@@ -342,6 +343,7 @@ def compute_stats(
 
     return {
         "calls": len(rows),
+        "legacy_rows": legacy_rows,
         "by_tool": dict(by_tool),
         "models": dict(models),
         "cascade": {
@@ -372,6 +374,11 @@ def format_stats(stats: dict[str, Any], days: int | None = None) -> str:
 
     tools = ", ".join(f"{name}={count}" for name, count in stats["by_tool"].items())
     lines.append(f"tools: {tools}")
+
+    if stats.get("legacy_rows"):
+        lines.append(
+            f"legacy rows: {stats['legacy_rows']} (pre-0.3.0; usage may be double-counted)"
+        )
 
     if stats["models"]:
         models = ", ".join(

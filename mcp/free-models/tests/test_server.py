@@ -166,6 +166,7 @@ class TestStats(unittest.TestCase):
     def test_aggregates(self) -> None:
         stats = server.compute_stats(self.ROWS)
         self.assertEqual(stats["calls"], 3)
+        self.assertEqual(stats["legacy_rows"], 3)
         self.assertEqual(stats["by_tool"]["free_cascade"], 2)
         self.assertEqual(stats["cascade"]["accepted"], 1)
         self.assertEqual(stats["cascade"]["escalated"], 1)

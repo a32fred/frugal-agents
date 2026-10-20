@@ -131,7 +131,7 @@ One JSON object per line, with usage normalized across providers and a schema ve
  "score": 1.0, "accepted": true, "escalate_to_paid": false, "latency_ms": 10528}
 ```
 
-Cascades write one record with merged generator + judge usage; the internal calls do not write separate `free_ask` rows, which keeps `stats` from double-counting. Appends take a POSIX `flock` and rotate to `ledger.jsonl.1` at 10 MB (`FRUGAL_LEDGER_MAX_BYTES`). `stats` reads the rotated file and the current file, but old pre-0.3.0 rows have no `schema_version`; compare like with like.
+Cascades write one record with merged generator + judge usage; the internal calls do not write separate `free_ask` rows, which keeps `stats` from double-counting. Appends take a POSIX `flock` and rotate to `ledger.jsonl.1` at 10 MB (`FRUGAL_LEDGER_MAX_BYTES`). `stats` reads the rotated file and the current file, and prints a `legacy rows` warning for pre-0.3.0 entries whose usage may be double-counted.
 
 `normalize_usage()` accepts OpenAI/NIM (`prompt_tokens_details.cached_tokens`), DeepSeek (`prompt_cache_hit_tokens`) and Anthropic (`cache_read_input_tokens`, `cache_creation_input_tokens`) shapes. Cascades sum generator and judge usage.
 

@@ -14,7 +14,7 @@ Most agent traffic is not hard. Commit messages, summaries, docstrings, regexes,
 
 This repository contains the research, the playbook of failure modes, and a working **zero-dependency MCP server** that plugs into Codex CLI, Claude Code, or any MCP client.
 
-> **Project status: experimental (v0.3.0).** This is a research prototype and reference implementation, not a turnkey product. The server, the judge-independence guard, cancellation, the ledger and the test suite are real. The savings are not yet benchmarked on a public task set, and only Codex CLI has been tested end-to-end. Read [Status & maturity](#status--maturity) and the [harness compatibility matrix](docs/07-harness-compatibility.md) before deploying it.
+> **Project status: experimental (v0.3.1).** This is a research prototype and reference implementation, not a turnkey product. The server, the judge-independence guard, cancellation, the ledger and the test suite are real. The savings are not yet benchmarked on a public task set, and only Codex CLI has been tested end-to-end. Read [Status & maturity](#status--maturity) and the [harness compatibility matrix](docs/07-harness-compatibility.md) before deploying it.
 
 ---
 
@@ -236,7 +236,7 @@ Start with Phase 0 of [`docs/04-roadmap.md`](docs/04-roadmap.md): classify one w
 
 ## Status & maturity
 
-Experimental, pre-1.0. The v0.3.0 work removed defects that made unattended use unreliable; it did not add new routing features.
+Experimental, pre-1.0. The v0.3.x hardening work removed defects that made unattended use unreliable; it did not add new routing features.
 
 | Area | State | Evidence |
 |---|---|---|
