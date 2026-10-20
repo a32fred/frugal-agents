@@ -255,3 +255,21 @@ metadata, not a bill, and cannot infer what a paid model would have consumed.
 - `run.py` — CLI
 - `tests/` — harness unit tests
 - `results/` — run artifacts published with the repository
+
+## Bench B — paid vs routed (subscription)
+
+Bench B reuses the same discipline with a real trade-off: the paid baseline is
+the operator's actual daily tiering (`gpt-5.6-sol` / `gpt-6.1-sol` /
+`gpt-6-astra`), executed with the subscription-backed `codex` CLI. The routed
+arm hands T0/T1 to the free tier and escalates failures to the paid model.
+
+- Methodology and frozen decision rules: [`BENCH_B.md`](BENCH_B.md)
+- Smoke tasks and reference solutions: `b_tasks.py`
+- Runner and CLI: `b_runner.py` / `b_run.py`
+- Shadow pricing: `b_prices.example.json` (USD only as an estimate; the
+  subscription consumes quota, not dollars)
+
+```bash
+python -m bench.b_run --validate-only
+python -m bench.b_run --out bench/results/b-smoke --arms paid_mirror,routed
+```

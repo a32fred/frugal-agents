@@ -14,6 +14,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - `bench/PREREGISTRATION.md` with frozen hypotheses, sampling plan, analysis rules, and deviation log.
 - Harness unit tests (12) in `bench/tests/` and a CI validation job that needs no API key.
 - `bench/run.py --resume`: interrupted free-tier runs can be continued without overwriting completed rows.
+- `bench/b_run.py`: Bench B runner for the paid vs routed trade-off on the subscription-backed `codex` CLI (`--validate-only` proves each task is broken and solvable without any model call).
+- `bench/BENCH_B.md`: Bench B pre-registration with the operator's real paid tiering as the baseline.
 
 ### Results
 
