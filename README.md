@@ -1,6 +1,6 @@
 # frugal-agents
 
-**Cut LLM agent costs by 40–70% without losing quality: route easy work to free models, keep the paid model for decisions and review.**
+**Route easy agent work to free models, keep the paid model for decisions, and measure the savings instead of assuming them.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
@@ -13,6 +13,8 @@ Most agent traffic is not hard. Commit messages, summaries, docstrings, regexes,
 `frugal-agents` is a **cascade router for coding agents**. A free model produces, a second free model reviews against a strict checklist, and only rejected work escalates to the paid model. The paid model spends its tokens where it is actually better: ambiguous requirements, architecture, production debugging, security, and final review.
 
 This repository contains the research, the playbook of failure modes, and a working **zero-dependency MCP server** that plugs into Codex CLI, Claude Code, or any MCP client.
+
+> **Project status: experimental (v0.3.0).** This is a research prototype and reference implementation, not a turnkey product. The server, the judge-independence guard, cancellation, the ledger and the test suite are real. The savings are not yet benchmarked on a public task set, and only Codex CLI has been tested end-to-end. Read [Status & maturity](#status--maturity) and the [harness compatibility matrix](docs/07-harness-compatibility.md) before deploying it.
 
 ---
 
@@ -32,7 +34,7 @@ flowchart TD
     Z --> E
 ```
 
-Three properties make this safe:
+Three properties keep the trade-off honest:
 
 1. **Generator ≠ judge.** A different model catches defects that self-review misses (the AutoMix finding).
 2. **Escalation carries evidence.** The paid model receives the task, the free answer, and the judge's issues — not the whole transcript.
@@ -84,7 +86,7 @@ The server normalizes cache and reasoning fields from OpenAI, DeepSeek and Anthr
 
 ```bash
 python3 server.py stats --days 7
-# cache: 812,400/1,204,000 prompt tokens (67.5% hit rate) · write 12,000
+# example output: cache: 812,400/1,204,000 prompt tokens (67.5% hit rate) · write 12,000
 ```
 
 ---
@@ -95,17 +97,19 @@ python3 server.py stats --days 7
 frugal-agents/
 ├── docs/
 │   ├── 01-research.md       literature review, numbers, limitations
-│   ├── 02-architecture.md   tiers, cascade, four implementation paths
-│   ├── 03-playbook.md       12 failure modes with concrete mitigations
+│   ├── 02-architecture.md   tiers, cascade, concurrency, four implementation paths
+│   ├── 03-playbook.md       13 failure modes with concrete mitigations
 │   ├── 04-roadmap.md        phases, acceptance criteria, rollback
 │   ├── 05-token-glossary.md billing and architecture terms, provider cheat sheet
-│   └── 06-prompt-caching.md KV cache mechanics, hit-rate math, anti-patterns
+│   ├── 06-prompt-caching.md KV cache mechanics, hit-rate math, anti-patterns
+│   └── 07-harness-compatibility.md  protocol revisions, client configs, tested/untested matrix
+├── SECURITY.md              threat model, reporting, deployment limits
 └── mcp/free-models/
     ├── server.py            MCP stdio server — Python stdlib only
     ├── codex-config.example.toml
     ├── opencode-config.example.json
     ├── routing-policy.md    drop-in AGENTS.md policy
-    └── tests/               unit tests + live smoke test
+    └── tests/               39 unit tests + live smoke test + official MCP SDK smoke test
 ```
 
 ---
@@ -118,7 +122,8 @@ Requirements: Python 3.10+, a free NVIDIA NIM API key from [build.nvidia.com](ht
 git clone https://github.com/a32fred/frugal-agents.git
 cd frugal-agents/mcp/free-models
 
-export NIM_API_KEY="nvapi-..."          # or: NIM_API_KEY_FILE=~/.secrets/nvidia-key
+export NIM_API_KEY="nvapi-..."          # or: NIM_API_KEY_FILE=/absolute/path/to/nvidia-key
+python3 server.py doctor                 # key, API, catalog, ledger, opencode
 python3 server.py models                 # show the free model chain
 python3 server.py ask "Write a conventional commit message for: add retry with backoff"
 python3 server.py cascade "Write a Python slugify() with accent stripping"
@@ -135,7 +140,7 @@ Copy [`codex-config.example.toml`](mcp/free-models/codex-config.example.toml) in
 [mcp_servers.free-models]
 command = "python3"
 args = ["/absolute/path/to/frugal-agents/mcp/free-models/server.py"]
-env = { NIM_API_KEY_FILE = "~/.secrets/nvidia-key" }
+env = { NIM_API_KEY_FILE = "/absolute/path/to/nvidia-key" }
 startup_timeout_sec = 20
 tool_timeout_sec = 900
 ```
@@ -159,12 +164,16 @@ Then add the routing policy from [`routing-policy.md`](mcp/free-models/routing-p
   "accepted": true,
   "score": 1.0,
   "issues": [],
+  "warnings": [],
+  "judge_independent": true,
   "answer": "git log -3 --oneline",
   "generator": "openai/gpt-oss-20b",
   "judge": "google/gemma-4-31b-it",
   "escalate_to_paid": false
 }
 ```
+
+`judge_independent` is `false` only when no alternative model exists in the chain. In that case the review still runs, but the result carries a warning; it is not reported as independent evidence.
 
 When `escalate_to_paid` is `true`, hand the task, the answer, and the `issues` list to the paid tier. Do not hand over the whole conversation.
 
@@ -186,12 +195,16 @@ The rule behind the table: **the paid model decides and reviews; free models pro
 
 - **Redaction before egress.** `free_ask`, `free_cascade`, and `free_agent` strip common credential shapes (`nvapi-`, `sk-`, GitHub tokens, AWS keys, private key blocks, `KEY=value` assignments) before sending anything to a cloud model.
 - **No secrets in free prompts.** The routing policy forbids sending `.env` files, customer data, or credentials to free tiers. Redaction is a backstop, not a permission slip.
+- **Task text is not in the process list.** `free_agent` writes the task to the worker's stdin instead of argv; cancelling the MCP request terminates the worker's process group.
 - **Local-only option.** Point `NIM_BASE_URL` at a self-hosted NIM or Ollama endpoint for zero egress.
-- **Ledger.** Every call appends a JSONL record (model, tokens, latency, judge score, escalation) to `~/.frugal-agents/ledger.jsonl`, so savings are measured, not guessed. Disable with `FRUGAL_NO_LEDGER=1`.
+- **Ledger.** Every call appends a JSONL record (model, tokens, latency, judge score, escalation) to `~/.frugal-agents/ledger.jsonl`, so savings are measured, not guessed. Records carry a schema version, are serialized with a file lock across processes, rotate at 10 MB, and never contain prompt or answer text. Disable with `FRUGAL_NO_LEDGER=1`.
+- **Known limits.** Redaction is best-effort, the worker is not sandboxed, and the ledger is local observability rather than an audit trail. See [`SECURITY.md`](SECURITY.md).
 
 ---
 
-## Measured expectations (not marketing)
+## Expected savings (hypothesis, not a published benchmark)
+
+Published cascades report large savings, but **this repository has not benchmarked them on a public task set yet**. The table below is a hypothesis to test against your own paid-token baseline, not a result.
 
 Savings = share of tokens moved to free models × (1 − handoff overhead ≈ 10%).
 
@@ -201,7 +214,7 @@ Savings = share of tokens moved to free models × (1 − handoff overhead ≈ 10
 | Realistic — T0 + T1, paid review | 50% | ~40–50% |
 | Aggressive — cascade + parallel workers + inverted orchestrator | 70% | ~60–70% |
 
-Track your own numbers with the ledger before quoting any of these. The repository ships the measurement, not a promise.
+Start with Phase 0 of [`docs/04-roadmap.md`](docs/04-roadmap.md): classify one week of real usage, then compare the ledger against that baseline. The repository ships the measurement; it does not yet ship proof for your workload.
 
 ---
 
@@ -215,7 +228,35 @@ Track your own numbers with the ledger before quoting any of these. The reposito
 
 **Is this only for NVIDIA NIM?** No. Any OpenAI-compatible `/chat/completions` endpoint works — set `NIM_BASE_URL`. The defaults and examples use NIM because its free tier is generous.
 
-**Can I use this with Claude Code / other MCP clients?** Yes. It is a standard stdio MCP server with `tools/list` and `tools/call`.
+**Can I use this with Claude Code / other MCP clients?** It speaks standard stdio MCP and negotiates protocol revisions from `2024-11-05` through `2025-11-25`. Codex CLI is the only client tested end-to-end. Configuration examples for Claude Code, Cursor, OpenCode, Zed, Cline and Gemini CLI are in [`docs/07-harness-compatibility.md`](docs/07-harness-compatibility.md), but those paths are untested. The stateless `2026-07-28` revision is not implemented yet.
+
+**Does it work on Windows?** Partially and untested. The server is stdlib-only and process cancellation has a Windows fallback, but ledger locking is POSIX-only and CI runs on Linux only. Treat Windows as unsupported until the roadmap's cross-OS gate passes.
+
+---
+
+## Status & maturity
+
+Experimental, pre-1.0. The v0.3.0 work removed defects that made unattended use unreliable; it did not add new routing features.
+
+| Area | State | Evidence |
+|---|---|---|
+| Core tools | working | live Codex CLI call, live cascade, 39 unit tests |
+| Judge independence | enforced when the chain has an alternative; otherwise flagged | unit tests |
+| MCP lifecycle | threaded; `ping`, progress and `notifications/cancelled`; negotiates `2024-11-05` → `2025-11-25` | concurrency tests, official SDK smoke test |
+| Reliability | 429/5xx backoff with jitter, model cooldown, ledger schema/lock/rotation | unit tests |
+| Harnesses | Codex CLI tested; other clients documented but untested | [`docs/07-harness-compatibility.md`](docs/07-harness-compatibility.md) |
+| Security | redaction and policy; the worker is not sandboxed | [`SECURITY.md`](SECURITY.md) |
+| Savings | instrumented, not benchmarked | roadmap Phase 0 |
+
+**What v1.0 still requires:**
+
+- A golden-task evaluation set with human labels and published judge precision/recall.
+- End-to-end tests on at least Codex, Claude Code, Cursor and OpenCode.
+- Packaging (`uvx` and Docker) and Windows CI.
+- A published before/after token and cost benchmark on a reproducible repository.
+- The stateless `2026-07-28` MCP revision, or an explicit decision to stay on the legacy session protocol.
+
+Until then, treat this as a reference implementation: useful, measured locally, and not a drop-in replacement for your paid model.
 
 ---
 
@@ -226,8 +267,12 @@ Track your own numbers with the ledger before quoting any of these. The reposito
 - [x] Fallback chain, health cooldown, redaction, JSONL ledger
 - [x] Provider-agnostic cache/reasoning usage normalization and `stats`
 - [x] Token glossary and prompt-caching guide
+- [x] Hardening: judge guard, threshold fix, stdin task handoff, concurrency/cancellation, backoff, ledger lock/rotation, `doctor`
+- [x] Harness compatibility matrix and official MCP SDK smoke test
 - [ ] Per-task-type judge checklists and tuned thresholds
+- [ ] Golden-task eval set and judge precision/recall
 - [ ] Parallel worker recipe (paid coordinator + free workers in worktrees)
+- [ ] Packaging (`uvx`/Docker) and Windows CI
 - [ ] Optional Responses↔Chat proxy profile for Codex
 - [ ] Benchmark harness that reports real savings per repository
 
