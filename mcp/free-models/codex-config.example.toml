@@ -1,0 +1,29 @@
+# frugal-agents — Codex CLI MCP registration
+#
+# Copy this block into ~/.codex/config.toml and fix the absolute path.
+# Docs: https://github.com/a32fred/frugal-agents
+
+[mcp_servers.free-models]
+command = "python3"
+args = ["/absolute/path/to/frugal-agents/mcp/free-models/server.py"]
+
+# Strongly recommended: keep the key in a file outside any repository.
+# The server reads NIM_API_KEY first, then NIM_API_KEY_FILE.
+env = { NIM_API_KEY_FILE = "/home/you/.secrets/nvidia-key" }
+
+# Optional: keep the key inline instead (worse: it ends up in backups/shell history).
+# env = { NIM_API_KEY = "nvapi-..." }
+
+startup_timeout_sec = 20
+tool_timeout_sec = 900
+
+# ---------------------------------------------------------------------------
+# Optional: a paid model profile with low reasoning effort for T1 sessions.
+# This does not call NIM; it only makes the paid model cheaper on simple work.
+# ---------------------------------------------------------------------------
+#
+# [profiles.t1]
+# model = "gpt-5-codex"
+# model_reasoning_effort = "low"
+#
+# Usage: codex -p t1

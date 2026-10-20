@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# local configuration and secrets
+.env
+.env.*
+*.key
+secrets/
+
+# runtime artifacts
+ledger.jsonl
+*.log
+.DS_Store

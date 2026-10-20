@@ -1,0 +1,61 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+
+  "//": "OpenCode provider for the free NIM tier. Export NIM_API_KEY before starting opencode.",
+
+  "model": "nim/z-ai/glm-5.3",
+  "small_model": "nim/openai/gpt-oss-20b",
+
+  "providers": {
+    "nim": {
+      "name": "NVIDIA NIM (free)",
+      "package": "@opencode/ai/providers/openai-compatible",
+      "settings": {
+        "baseURL": "https://integrate.api.nvidia.com/v1",
+        "apiKey": "{env:NIM_API_KEY}"
+      },
+      "models": {
+        "openai/gpt-oss-20b": {
+          "name": "GPT-OSS 20B (NIM)",
+          "limit": { "context": 131072, "output": 32768 },
+          "capabilities": {
+            "tools": true,
+            "input": ["text"],
+            "output": ["text"],
+            "reasoning": { "supported": true, "effort": ["low", "medium", "high"] }
+          }
+        },
+        "google/gemma-4-31b-it": {
+          "name": "Gemma 4 31B (NIM)",
+          "limit": { "context": 256000, "output": 16384 },
+          "capabilities": {
+            "tools": true,
+            "input": ["text", "image"],
+            "output": ["text"]
+          }
+        },
+        "z-ai/glm-5.3": {
+          "name": "GLM 5.3 (NIM)",
+          "limit": { "context": 1000000, "output": 131072 },
+          "settings": { "reasoningEffort": "low" },
+          "capabilities": {
+            "tools": true,
+            "input": ["text"],
+            "output": ["text"],
+            "reasoning": { "supported": true, "effort": ["low", "high", "max"] }
+          }
+        },
+        "deepseek-ai/deepseek-v4.1-flash": {
+          "name": "DeepSeek V4.1 Flash (NIM)",
+          "limit": { "context": 1000000, "output": 384000 },
+          "capabilities": {
+            "tools": true,
+            "input": ["text", "image"],
+            "output": ["text"],
+            "reasoning": { "supported": true, "effort": ["none", "low", "high", "max"] }
+          }
+        }
+      }
+    }
+  }
+}
