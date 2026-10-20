@@ -69,6 +69,113 @@ class TestVerdict(unittest.TestCase):
         self.assertEqual(verdict["issues"], ["none"])
 
 
+class TestUsageNormalization(unittest.TestCase):
+    def test_openai_cached_and_reasoning(self) -> None:
+        usage = server.normalize_usage(
+            {
+                "prompt_tokens": 1000,
+                "completion_tokens": 100,
+                "total_tokens": 1100,
+                "prompt_tokens_details": {"cached_tokens": 800},
+                "completion_tokens_details": {"reasoning_tokens": 40},
+            }
+        )
+        self.assertEqual(usage["cached_tokens"], 800)
+        self.assertEqual(usage["cache_hit_rate"], 0.8)
+        self.assertEqual(usage["reasoning_tokens"], 40)
+        self.assertEqual(usage["total_tokens"], 1100)
+
+    def test_deepseek_cache_fields(self) -> None:
+        usage = server.normalize_usage(
+            {
+                "prompt_tokens": 1000,
+                "completion_tokens": 50,
+                "prompt_cache_hit_tokens": 900,
+                "prompt_cache_miss_tokens": 100,
+            }
+        )
+        self.assertEqual(usage["cached_tokens"], 900)
+        self.assertEqual(usage["cache_hit_rate"], 0.9)
+
+    def test_anthropic_fields_are_additive(self) -> None:
+        usage = server.normalize_usage(
+            {
+                "input_tokens": 100,
+                "output_tokens": 50,
+                "cache_read_input_tokens": 800,
+                "cache_creation_input_tokens": 100,
+            }
+        )
+        self.assertEqual(usage["prompt_tokens"], 1000)
+        self.assertEqual(usage["cached_tokens"], 800)
+        self.assertEqual(usage["cache_write_tokens"], 100)
+        self.assertEqual(usage["cache_hit_rate"], 0.8)
+        self.assertEqual(usage["completion_tokens"], 50)
+
+    def test_empty_usage(self) -> None:
+        usage = server.normalize_usage(None)
+        self.assertEqual(usage["prompt_tokens"], 0)
+        self.assertEqual(usage["cache_hit_rate"], 0.0)
+
+    def test_merge_usage_sums_generator_and_judge(self) -> None:
+        merged = server.merge_usage(
+            {"prompt_tokens": 100, "cached_tokens": 80, "completion_tokens": 10},
+            {"prompt_tokens": 50, "cached_tokens": 0, "completion_tokens": 5},
+        )
+        self.assertEqual(merged["prompt_tokens"], 150)
+        self.assertEqual(merged["cached_tokens"], 80)
+        self.assertEqual(merged["completion_tokens"], 15)
+        self.assertAlmostEqual(merged["cache_hit_rate"], 0.5333, places=3)
+
+
+class TestStats(unittest.TestCase):
+    ROWS = [
+        {
+            "tool": "free_ask",
+            "model": "m1",
+            "usage": {"prompt_tokens": 100, "cached_tokens": 80, "completion_tokens": 10},
+            "latency_ms": 100,
+        },
+        {
+            "tool": "free_cascade",
+            "model": "m1",
+            "judge": "m2",
+            "usage": {"prompt_tokens": 100, "cached_tokens": 20},
+            "accepted": True,
+            "latency_ms": 900,
+        },
+        {
+            "tool": "free_cascade",
+            "model": "m1",
+            "usage": {"prompt_tokens": 0},
+            "accepted": False,
+            "latency_ms": 300,
+        },
+    ]
+
+    def test_aggregates(self) -> None:
+        stats = server.compute_stats(self.ROWS)
+        self.assertEqual(stats["calls"], 3)
+        self.assertEqual(stats["by_tool"]["free_cascade"], 2)
+        self.assertEqual(stats["cascade"]["accepted"], 1)
+        self.assertEqual(stats["cascade"]["escalated"], 1)
+        self.assertEqual(stats["cascade"]["escalation_rate"], 0.5)
+        self.assertEqual(stats["cache"]["cached_tokens"], 100)
+        self.assertEqual(stats["cache"]["hit_rate"], 0.5)
+        self.assertEqual(stats["latency_ms"]["p95"], 900)
+
+    def test_empty(self) -> None:
+        stats = server.compute_stats([])
+        self.assertEqual(stats["calls"], 0)
+        self.assertEqual(stats["cascade"]["escalation_rate"], 0.0)
+        self.assertIn("no ledger entries", server.format_stats(stats))
+
+    def test_format_contains_rates(self) -> None:
+        text = server.format_stats(server.compute_stats(self.ROWS))
+        self.assertIn("escalation 50.0%", text)
+        self.assertIn("50.0% hit rate", text)
+
+
 class TestChain(unittest.TestCase):
     def test_requested_model_first_and_deduplicated(self) -> None:
         os.environ["FRUGAL_CHAIN"] = "a/model,b/model,a/model"

@@ -59,6 +59,36 @@ The honest caveats, which shape the design in [`docs/03-playbook.md`](docs/03-pl
 
 ---
 
+## The other 90%: prompt caching
+
+Routing decides *which* model runs. Caching makes the *same* model cheaper. They stack, and caching requires no quality trade-off.
+
+| Provider | Cache reads | Cache writes | Notes |
+|---|---|---|---|
+| OpenAI (GPT-5.4+) | **90% off** | none | automatic, ~1K-token minimum, still counts against TPM |
+| Anthropic | **90% off** (0.1×) | 1.25× (5 min) / 2× (1 h) | explicit breakpoints, 4 per request |
+| Google Gemini | ~75% off implicit | storage per hour | explicit caches bill while they exist |
+| DeepSeek | up to ~90% off | none | disk cache, off-peak halves the bill |
+| NVIDIA NIM free | $0 | $0 | no billing, latency benefit only |
+
+Two metrics decide whether you actually get the discount:
+
+```text
+hit rate  = cached input tokens / total input tokens     # target > 70% in agent loops
+write:read = cache writes / cache reads                  # target < 10%
+```
+
+The usual killer is a timestamp or a reordered tool list early in the prompt: it turns an 80% saving into 6% without any error message. Read [`docs/06-prompt-caching.md`](docs/06-prompt-caching.md) for the mechanics and [`docs/05-token-glossary.md`](docs/05-token-glossary.md) for every billing term (including why "gold cache" is a TUI color, not a product).
+
+The server normalizes cache and reasoning fields from OpenAI, DeepSeek and Anthropic, then reports them from the ledger:
+
+```bash
+python3 server.py stats --days 7
+# cache: 812,400/1,204,000 prompt tokens (67.5% hit rate) · write 12,000
+```
+
+---
+
 ## What's in the box
 
 ```
@@ -67,7 +97,9 @@ frugal-agents/
 │   ├── 01-research.md       literature review, numbers, limitations
 │   ├── 02-architecture.md   tiers, cascade, four implementation paths
 │   ├── 03-playbook.md       12 failure modes with concrete mitigations
-│   └── 04-roadmap.md        phases, acceptance criteria, rollback
+│   ├── 04-roadmap.md        phases, acceptance criteria, rollback
+│   ├── 05-token-glossary.md billing and architecture terms, provider cheat sheet
+│   └── 06-prompt-caching.md KV cache mechanics, hit-rate math, anti-patterns
 └── mcp/free-models/
     ├── server.py            MCP stdio server — Python stdlib only
     ├── codex-config.example.toml
@@ -90,6 +122,7 @@ export NIM_API_KEY="nvapi-..."          # or: NIM_API_KEY_FILE=~/.secrets/nvidia
 python3 server.py models                 # show the free model chain
 python3 server.py ask "Write a conventional commit message for: add retry with backoff"
 python3 server.py cascade "Write a Python slugify() with accent stripping"
+python3 server.py stats                  # escalation rate, cache hit rate, p95 latency
 ```
 
 No dependencies to install, no virtualenv, no daemon.
@@ -191,6 +224,8 @@ Track your own numbers with the ledger before quoting any of these. The reposito
 - [x] Research review and failure-mode playbook
 - [x] Zero-dependency MCP server (`free_ask`, `free_agent`, `free_cascade`)
 - [x] Fallback chain, health cooldown, redaction, JSONL ledger
+- [x] Provider-agnostic cache/reasoning usage normalization and `stats`
+- [x] Token glossary and prompt-caching guide
 - [ ] Per-task-type judge checklists and tuned thresholds
 - [ ] Parallel worker recipe (paid coordinator + free workers in worktrees)
 - [ ] Optional Responses↔Chat proxy profile for Codex
@@ -210,4 +245,4 @@ MIT. See [LICENSE](LICENSE).
 
 ## Keywords
 
-LLM cost optimization · model routing · cascade inference · FrugalGPT · RouteLLM · AutoMix · token savings · AI agent economics · MCP server · Codex CLI · OpenCode · NVIDIA NIM · free LLM API · generator-critic · multi-model review · prompt caching · agent orchestration
+LLM cost optimization · model routing · cascade inference · FrugalGPT · RouteLLM · AutoMix · token savings · AI agent economics · MCP server · Codex CLI · OpenCode · NVIDIA NIM · free LLM API · generator-critic · multi-model review · prompt caching · cached input tokens · KV cache · cache hit rate · reasoning tokens · batch API · token glossary · agent orchestration

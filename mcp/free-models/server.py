@@ -11,6 +11,7 @@ Modes
     server.py ask "..."           one-shot text completion
     server.py agent "..."         delegate a tool-using task to `opencode run`
     server.py cascade "..."       generate + judge, with an escalation verdict
+    server.py stats [--days N]    escalation, cache hit rate and latency from the ledger
     server.py models              print the configured model chain
     server.py --version           print version
 
@@ -31,6 +32,7 @@ Environment
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import subprocess
@@ -38,9 +40,10 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from collections import Counter
 from typing import Any
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 PROTOCOL_VERSION = "2024-11-05"
 SERVER_NAME = "free-models"
 
@@ -212,6 +215,118 @@ def record(entry: dict[str, Any]) -> None:
         pass
 
 
+def read_ledger(path: str | None = None) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    try:
+        with open(path or ledger_path(), "r", encoding="utf-8") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(row, dict):
+                    rows.append(row)
+    except OSError:
+        pass
+    return rows
+
+
+def compute_stats(
+    rows: list[dict[str, Any]], days: int | None = None
+) -> dict[str, Any]:
+    """Cascade escalation rate, cache hit rate and latency from the ledger."""
+    if days:
+        cutoff = time.time() - days * 86400
+        rows = [row for row in rows if _int(row.get("ts")) >= cutoff]
+
+    by_tool = Counter(str(row.get("tool", "unknown")) for row in rows)
+    models = Counter(
+        str(row.get("model", "unknown")) for row in rows if row.get("model")
+    )
+
+    cascades = [row for row in rows if row.get("tool") == "free_cascade"]
+    accepted = sum(1 for row in cascades if row.get("accepted") is True)
+    escalated = len(cascades) - accepted
+
+    prompt_tokens = cached_tokens = cache_write_tokens = completion_tokens = 0
+    for row in rows:
+        usage = row.get("usage") or {}
+        prompt_tokens += _int(usage.get("prompt_tokens"))
+        cached_tokens += _int(usage.get("cached_tokens"))
+        cache_write_tokens += _int(usage.get("cache_write_tokens"))
+        completion_tokens += _int(usage.get("completion_tokens"))
+
+    latencies = sorted(_int(row.get("latency_ms")) for row in rows if row.get("latency_ms"))
+    p95 = (
+        latencies[max(0, math.ceil(0.95 * len(latencies)) - 1)] if latencies else 0
+    )
+
+    return {
+        "calls": len(rows),
+        "by_tool": dict(by_tool),
+        "models": dict(models),
+        "cascade": {
+            "total": len(cascades),
+            "accepted": accepted,
+            "escalated": escalated,
+            "escalation_rate": round(escalated / len(cascades), 4) if cascades else 0.0,
+        },
+        "cache": {
+            "prompt_tokens": prompt_tokens,
+            "cached_tokens": cached_tokens,
+            "cache_write_tokens": cache_write_tokens,
+            "completion_tokens": completion_tokens,
+            "hit_rate": round(cached_tokens / prompt_tokens, 4) if prompt_tokens else 0.0,
+        },
+        "latency_ms": {
+            "avg": round(sum(latencies) / len(latencies)) if latencies else 0,
+            "p95": p95,
+        },
+    }
+
+
+def format_stats(stats: dict[str, Any], days: int | None = None) -> str:
+    period = f"last {days}d" if days else "all time"
+    lines = [f"calls: {stats['calls']} ({period})"]
+    if not stats["calls"]:
+        return lines[0] + "\nno ledger entries yet"
+
+    tools = ", ".join(f"{name}={count}" for name, count in stats["by_tool"].items())
+    lines.append(f"tools: {tools}")
+
+    if stats["models"]:
+        models = ", ".join(
+            f"{name}={count}"
+            for name, count in sorted(
+                stats["models"].items(), key=lambda item: item[1], reverse=True
+            )[:5]
+        )
+        lines.append(f"models: {models}")
+
+    cascade = stats["cascade"]
+    if cascade["total"]:
+        lines.append(
+            f"cascade: {cascade['accepted']}/{cascade['total']} accepted · "
+            f"escalation {cascade['escalation_rate']:.1%}"
+        )
+    else:
+        lines.append("cascade: no calls yet")
+
+    cache = stats["cache"]
+    lines.append(
+        f"cache: {cache['cached_tokens']:,}/{cache['prompt_tokens']:,} prompt tokens "
+        f"({cache['hit_rate']:.1%} hit rate) · write {cache['cache_write_tokens']:,}"
+    )
+    lines.append(
+        f"latency: avg {stats['latency_ms']['avg']:,} ms · "
+        f"p95 {stats['latency_ms']['p95']:,} ms"
+    )
+    return "\n".join(lines)
+
+
 # --------------------------------------------------------------------------- #
 # NIM client
 # --------------------------------------------------------------------------- #
@@ -222,6 +337,83 @@ def timeout_seconds() -> float:
         return float(os.environ.get("FRUGAL_TIMEOUT", "75"))
     except ValueError:
         return 120.0
+
+
+def _int(value: Any) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def normalize_usage(usage: dict[str, Any] | None) -> dict[str, Any]:
+    """Map provider-specific usage fields onto one billing shape.
+
+    OpenAI / NIM   prompt_tokens_details.cached_tokens
+    DeepSeek       prompt_cache_hit_tokens / prompt_cache_miss_tokens
+    Anthropic      cache_read_input_tokens / cache_creation_input_tokens
+                   (input_tokens excludes both, so the cacheable prompt is the sum)
+
+    Cache hit rate is cached tokens divided by the total prompt tokens. A low
+    rate on an agent loop means the prefix is volatile, not that caching is off.
+    """
+    usage = usage or {}
+
+    prompt = _int(usage.get("prompt_tokens") or usage.get("input_tokens"))
+    completion = _int(usage.get("completion_tokens") or usage.get("output_tokens"))
+
+    details = usage.get("prompt_tokens_details") or {}
+    cached = _int(details.get("cached_tokens")) if isinstance(details, dict) else 0
+    cached = _int(usage.get("prompt_cache_hit_tokens")) or cached  # DeepSeek
+    cached = _int(usage.get("cache_read_input_tokens")) or cached  # Anthropic
+    cache_write = _int(usage.get("cache_creation_input_tokens"))  # Anthropic
+
+    anthropic_style = (
+        "cache_read_input_tokens" in usage or "cache_creation_input_tokens" in usage
+    )
+    if anthropic_style:
+        prompt += cached + cache_write
+
+    completion_details = usage.get("completion_tokens_details") or {}
+    reasoning = (
+        _int(completion_details.get("reasoning_tokens"))
+        if isinstance(completion_details, dict)
+        else 0
+    )
+    reasoning = _int(usage.get("reasoning_tokens")) or reasoning
+
+    return {
+        "prompt_tokens": prompt,
+        "completion_tokens": completion,
+        "reasoning_tokens": reasoning,
+        "cached_tokens": cached,
+        "cache_write_tokens": cache_write,
+        "cache_hit_rate": round(cached / prompt, 4) if prompt else 0.0,
+        "total_tokens": _int(usage.get("total_tokens")) or prompt + completion,
+    }
+
+
+def merge_usage(*usages: dict[str, Any] | None) -> dict[str, Any]:
+    """Sum several calls (for example a generator plus its judge)."""
+    merged = {
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "reasoning_tokens": 0,
+        "cached_tokens": 0,
+        "cache_write_tokens": 0,
+        "total_tokens": 0,
+    }
+    for usage in usages:
+        if not usage:
+            continue
+        for key in merged:
+            merged[key] += _int(usage.get(key))
+    merged["cache_hit_rate"] = (
+        round(merged["cached_tokens"] / merged["prompt_tokens"], 4)
+        if merged["prompt_tokens"]
+        else 0.0
+    )
+    return merged
 
 
 def chat(
@@ -287,7 +479,7 @@ def chat(
         "text": content.strip(),
         "reasoning": reasoning.strip() if isinstance(reasoning, str) else "",
         "finish_reason": choice.get("finish_reason"),
-        "usage": data.get("usage") or {},
+        "usage": normalize_usage(data.get("usage")),
         "model": data.get("model") or model,
     }
 
@@ -461,9 +653,10 @@ def free_cascade(
             "tool": "free_cascade",
             "model": generated["model"],
             "judge": review["model"],
-            "usage": generated["usage"],
+            "usage": merge_usage(generated["usage"], review["usage"]),
             "score": verdict["score"],
             "accepted": accepted,
+            "escalate_to_paid": not accepted,
             "latency_ms": result["latency_ms"],
         }
     )
@@ -759,6 +952,20 @@ def main(argv: list[str]) -> int:
         print(f"generator: {DEFAULT_MODEL}")
         print(f"judge:     {DEFAULT_JUDGE}")
         print(f"chain:     {', '.join(chain_for(None))}")
+        return 0
+    if command == "stats":
+        days: int | None = None
+        if "--days" in argv:
+            index = argv.index("--days")
+            if index + 1 >= len(argv) or not argv[index + 1].isdigit():
+                print("error: --days needs a number", file=sys.stderr)
+                return 2
+            days = int(argv[index + 1])
+        stats = compute_stats(read_ledger(), days=days)
+        if "--json" in argv:
+            print(json.dumps(stats, indent=2))
+        else:
+            print(format_stats(stats, days))
         return 0
 
     text = " ".join(argv[1:]).strip()

@@ -104,15 +104,18 @@ Some models spend the entire `max_tokens` budget on reasoning and return `conten
 
 ### Ledger
 
-One JSON object per line:
+One JSON object per line, with usage normalized across providers:
 
 ```json
 {"ts": 1792496191.2, "tool": "free_cascade", "model": "openai/gpt-oss-20b",
- "judge": "google/gemma-4-31b-it", "usage": {"prompt_tokens": 71, "completion_tokens": 47},
- "score": 1.0, "accepted": true, "latency_ms": 10528}
+ "judge": "google/gemma-4-31b-it", "usage": {"prompt_tokens": 71, "completion_tokens": 47,
+ "cached_tokens": 0, "cache_write_tokens": 0, "reasoning_tokens": 0, "cache_hit_rate": 0.0},
+ "score": 1.0, "accepted": true, "escalate_to_paid": false, "latency_ms": 10528}
 ```
 
-Use it to compute escalation rate, cost per accepted task, and the real share of work that stays free.
+`normalize_usage()` accepts OpenAI/NIM (`prompt_tokens_details.cached_tokens`), DeepSeek (`prompt_cache_hit_tokens`) and Anthropic (`cache_read_input_tokens`, `cache_creation_input_tokens`) shapes. Cascades sum generator and judge usage.
+
+Use `server.py stats` to compute escalation rate, cache hit rate, model mix and p95 latency. See [`05-token-glossary.md`](05-token-glossary.md) for the terms and [`06-prompt-caching.md`](06-prompt-caching.md) for the caching mechanics.
 
 ## 6. Security model
 

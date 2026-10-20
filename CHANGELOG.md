@@ -5,6 +5,23 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-20
+
+### Added
+
+- `docs/05-token-glossary.md`: billing, caching, architecture, agent and benchmark terms, provider cheat sheet, commonly confused pairs, and institutional sources.
+- `docs/06-prompt-caching.md`: KV-cache mechanics, provider-by-provider pricing, hit-rate and write:read math, invalidation triggers, instrumentation, and anti-patterns.
+- `normalize_usage()`: maps OpenAI/NIM, DeepSeek and Anthropic usage fields (cached tokens, cache writes, reasoning tokens) onto one shape.
+- `merge_usage()`: sums generator and judge calls so the ledger reflects the real cost of a cascade.
+- `server.py stats [--days N] [--json]`: escalation rate, cache hit rate, model mix, average and p95 latency from the ledger.
+- Unit tests for usage normalization, merging, and statistics (25 tests total).
+
+### Changed
+
+- Ledger entries now store normalized usage, including `cached_tokens`, `cache_write_tokens`, `reasoning_tokens` and `cache_hit_rate`.
+- `free_cascade` logs the judge's usage and the `escalate_to_paid` verdict.
+- README documents the caching layer, the two metrics that decide it, and the `stats` command.
+
 ## [0.1.0] - 2026-10-20
 
 ### Added
@@ -26,5 +43,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Unit tests (no key required) and a live smoke test.
 - GitHub Actions CI across Python 3.10, 3.12, and 3.13.
 
-[Unreleased]: https://github.com/a32fred/frugal-agents/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/a32fred/frugal-agents/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/a32fred/frugal-agents/releases/tag/v0.2.0
 [0.1.0]: https://github.com/a32fred/frugal-agents/releases/tag/v0.1.0

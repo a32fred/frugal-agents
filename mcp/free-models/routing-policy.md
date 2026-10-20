@@ -65,3 +65,7 @@ When you delegate, keep the prompt under 20 lines and ask for a compact, structu
 ### Measurement
 
 Every free call is recorded in `~/.frugal-agents/ledger.jsonl`. Review escalation rate and free share weekly. Target: 10–20% escalation, ≥50% of tasks handled free.
+
+### Caching
+
+Keep the prompt prefix stable: no timestamps, dates, or reordered tool lists before the static instructions. Static content first, conversation last. Batch edits to this policy instead of changing it mid-session. On paid models, a low cache hit rate (<70%) usually means the prefix changed, not that caching is off. `python3 server.py stats` reports the hit rate from the ledger.
