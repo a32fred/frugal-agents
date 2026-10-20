@@ -797,6 +797,7 @@ def free_cascade(
         else ["judge fell back to the generator model; review is not independent"]
     )
 
+    usage = merge_usage(generated["usage"], review["usage"])
     result = {
         "accepted": accepted,
         "score": verdict["score"],
@@ -807,6 +808,7 @@ def free_cascade(
         "generator": generated["model"],
         "judge": review["model"],
         "escalate_to_paid": not accepted,
+        "usage": usage,
         "latency_ms": int((time.time() - started) * 1000),
     }
     record(
@@ -815,7 +817,7 @@ def free_cascade(
             "model": generated["model"],
             "judge": review["model"],
             "judge_independent": judge_independent,
-            "usage": merge_usage(generated["usage"], review["usage"]),
+            "usage": usage,
             "score": verdict["score"],
             "accepted": accepted,
             "escalate_to_paid": not accepted,

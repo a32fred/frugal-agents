@@ -14,7 +14,23 @@ Each phase has a measurable acceptance criterion. Do not start the next phase un
 - Tool annotations, `server.py doctor`, official MCP SDK smoke test.
 - Harness matrix and an explicit experimental status.
 
-`2026-07-28` stateless MCP, packaging, Windows parity and a public benchmark remain open.
+`2026-07-28` stateless MCP, packaging, Windows parity and a **paid** before/after benchmark remain open. A free-only quality and judge-calibration pilot now lives in [`bench/`](../bench/).
+
+## Benchmark A — free pilot (completed)
+
+**Deliverable:** a reproducible, dependency-free harness that measures free-task success and judge calibration without a paid baseline.
+
+- T0: 10 deterministic text tasks; `free_ask` vs `free_cascade`; two repetitions.
+- T1: 6 real regressions in `server.py`; the model returns a corrected function; the hidden 39-test suite grades it.
+- T2: 4 policy screens, reported separately because the grader is heuristic.
+- Harness proves every mutation fails the real suite; `--validate-only` requires no key.
+- Report includes Wilson intervals, judge precision/recall, false-accept rate, escalation and paired outcomes.
+
+**Acceptance:** all reference outputs and mutations validate; a full run produces `results.jsonl`, `summary.json` and `summary.md`. It does not claim USD savings.
+
+**Result (2026-10-20):** 54/66 calls succeeded overall. The free tier scored 40/46 on T0 text tasks and 12/12 on T1 code repair, but only 2/8 on the T2 policy screens. Judge precision on core T0 was 94.4% with a 5.0% false-accept rate on 20 decisions — close to, not clearly above, the H1 gate. Full report in [`bench/results/2026-10-20-pilot/summary.md`](../bench/results/2026-10-20-pilot/summary.md).
+
+**Rollback:** delete `bench/`; the server is unaffected.
 
 ## Phase 0 — Baseline (2 hours)
 
@@ -116,6 +132,8 @@ These targets are hypotheses, not results. The ledger records free calls only, s
 | Credential leaks | 0 |
 | Free share of tasks | ≥50% |
 | Judge precision on a human-labeled sample | ≥0.90 before trusting a high threshold |
+
+The free-only pilot in [`bench/`](../bench/) is the first calibration slice. It uses programmatic oracles, not human safety labels, so it can clear the judge-quality gate for routine text but cannot certify T2 policy behavior.
 
 ## v1.0 gate
 

@@ -309,6 +309,7 @@ class TestJudgeIndependence(unittest.TestCase):
         result, calls = self._run_cascade("gen/model", "judge/model")
         self.assertTrue(result["judge_independent"])
         self.assertEqual(result["warnings"], [])
+        self.assertIn("usage", result)
         self.assertEqual(calls[1]["exclude_models"], ["gen/model"])
 
     def test_same_model_is_flagged_not_hidden(self) -> None:

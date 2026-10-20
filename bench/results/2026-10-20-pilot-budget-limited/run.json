@@ -1,0 +1,16 @@
+{
+  "run_id": "2026-10-20-pilot",
+  "started_at": "2026-10-20T13:45:19Z",
+  "bench_version": "0.1.0",
+  "server_version": "0.3.1",
+  "git_commit": "634ee92c3b735f903be3a690a0c3d6d3a4884456",
+  "git_dirty": true,
+  "task_count": 23,
+  "text_reps": 2,
+  "code_reps": 1,
+  "arms": null,
+  "python": "3.14.7",
+  "platform": "linux",
+  "seed": 20261020,
+  "finished_at": "2026-10-20T14:15:48Z"
+}
