@@ -9,7 +9,7 @@ args = ["/absolute/path/to/frugal-agents/mcp/free-models/server.py"]
 
 # Strongly recommended: keep the key in a file outside any repository.
 # The server reads NIM_API_KEY first, then NIM_API_KEY_FILE.
-env = { NIM_API_KEY_FILE = "/home/you/.secrets/nvidia-key" }
+env = { NIM_API_KEY_FILE = "/absolute/path/to/nvidia-key" }
 
 # Optional: keep the key inline instead (worse: it ends up in backups/shell history).
 # env = { NIM_API_KEY = "nvapi-..." }

@@ -30,9 +30,9 @@ A cascade router is easy to demo and easy to get wrong. This is the list of ways
 
 **Problem.** A judge that is too lenient ships bad work; one that is too strict doubles cost. This is the single largest risk in the literature.
 
-**Mitigation.** Different model family from the generator; concrete scoring rubric; temperature 0; structured JSON; threshold calibrated per task type; monitor escalation rate and sample accepted work.
+**Mitigation.** Different model family from the generator; concrete scoring rubric; temperature 0; structured JSON; threshold calibrated per task type; monitor escalation rate and sample accepted work. The server excludes the generator from the judge call and returns `judge_independent: false` with a warning when no alternative model exists.
 
-**Detection.** Escalation rate outside 10–20%; accepted answers later fixed by a human.
+**Detection.** Escalation rate outside 10–20%; accepted answers later fixed by a human; `judge_independent: false` in the ledger.
 
 ## 5. Handoff overhead
 
@@ -70,9 +70,9 @@ A cascade router is easy to demo and easy to get wrong. This is the list of ways
 
 **Problem.** A broken server silently sends everything back to the paid model — savings evaporate without an error.
 
-**Mitigation.** The server is a single stdlib script with no daemon. Failures surface as `isError` tool results. Track the share of tasks handled free; alert when it drops.
+**Mitigation.** The server is a single stdlib script with no daemon. Failures surface as `isError` tool results. `server.py doctor` checks the key, endpoint, catalog, ledger and worker. Track the share of tasks handled free; alert when it drops. The ledger records free calls only, so pair it with your provider's paid-token billing export to get a real denominator.
 
-**Detection.** Weekly free-share metric from the ledger.
+**Detection.** Weekly free-share metric from the ledger plus the billing export.
 
 ## 10. The habit problem
 
@@ -86,7 +86,7 @@ A cascade router is easy to demo and easy to get wrong. This is the list of ways
 
 **Problem.** Free tiers enforce requests-per-minute limits. Parallel workers hit them quickly.
 
-**Mitigation.** Bound concurrency; exponential backoff on 429; cache repeated questions (commit templates, boilerplate); stagger workers.
+**Mitigation.** Bound concurrency (the MCP server defaults to 4 workers); retry 429/5xx with exponential backoff and jitter before falling through the chain; cache repeated questions (commit templates, boilerplate); stagger workers.
 
 **Detection.** 429 counts in the ledger.
 
@@ -98,12 +98,20 @@ A cascade router is easy to demo and easy to get wrong. This is the list of ways
 
 **Detection.** Prompt tokens per request over time.
 
+## 13. Client behaviour you did not test
+
+**Problem.** A server can be protocol-compatible and still fail in a harness: an approval policy that cannot answer prompts, a tool timeout shorter than the fallback chain, progress tokens that are never sent, or a client that requires the stateless `2026-07-28` revision. "Standard MCP" is not a compatibility test.
+
+**Mitigation.** Work through the matrix in [`07-harness-compatibility.md`](07-harness-compatibility.md); start with `server.py doctor`; set `tool_timeout_sec` above the worst-case chain; add `approval_mode` only where the client cannot prompt. Test `initialize`, `tools/list`, one `free_ask`, one cancellation and one timeout per client.
+
+**Detection.** Empty tool list, immediate disconnects, approval errors, or timeouts that match the client limit rather than the model.
+
 ## Calibration loop
 
 Run this every two weeks:
 
 1. Export the ledger.
-2. Compute: free share, escalation rate, accepted-answer score distribution, p95 latency.
+2. Compute: free share (against a paid billing baseline), escalation rate, accepted-answer score distribution, p95 latency.
 3. Sample 10 accepted answers and review them by hand.
 4. If escalation > 20%: the work is T2, or the judge is too strict.
 5. If escalation < 5% and sampling finds defects: the judge is too lenient — tighten the rubric, not the threshold alone.
@@ -111,7 +119,7 @@ Run this every two weeks:
 
 ## Anti-patterns
 
-- **Judge and generator from the same model.** Correlated errors; review becomes ceremony.
+- **Judge and generator from the same model.** Correlated errors; review becomes ceremony. If the chain has only one model, the server flags `judge_independent: false`; treat that review as a draft, not a gate.
 - **Threshold as the only control.** A lenient judge with a high threshold still accepts bad work at 0.81.
 - **Cascading T2 work.** If the task is ambiguous, escalate first; do not spend two free generations discovering that.
 - **Sending the transcript "for context".** It destroys the economics.

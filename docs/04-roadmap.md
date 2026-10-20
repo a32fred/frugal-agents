@@ -2,6 +2,20 @@
 
 Each phase has a measurable acceptance criterion. Do not start the next phase until the current one passes.
 
+## Hardening — completed in v0.3.0
+
+- Judge independence guard with an explicit `judge_independent` flag.
+- Per-call threshold honoured by `parse_verdict()`.
+- `free_agent` task moved from argv to stdin; cancellation kills the worker group.
+- Threaded MCP server: `ping`, progress and `notifications/cancelled` work during long calls.
+- Protocol negotiation across `2024-11-05` … `2025-11-25`.
+- 429/5xx exponential backoff with jitter.
+- Ledger `schema_version`, POSIX lock and 10 MB rotation.
+- Tool annotations, `server.py doctor`, official MCP SDK smoke test.
+- Harness matrix and an explicit experimental status.
+
+`2026-07-28` stateless MCP, packaging, Windows parity and a public benchmark remain open.
+
 ## Phase 0 — Baseline (2 hours)
 
 **Deliverable:** one week of paid-token usage classified by task type.
@@ -91,6 +105,8 @@ Each phase has a measurable acceptance criterion. Do not start the next phase un
 
 ## Success metrics (two weeks after Phase 1)
 
+These targets are hypotheses, not results. The ledger records free calls only, so pair it with your provider's paid-token billing export before computing a free share; otherwise the denominator is missing.
+
 | Metric | Target |
 |---|---|
 | Paid-token reduction | ≥40% after Phase 2; ≥60% after Phase 3 |
@@ -99,6 +115,18 @@ Each phase has a measurable acceptance criterion. Do not start the next phase un
 | Latency for T0/T1 | equal or better than paid baseline |
 | Credential leaks | 0 |
 | Free share of tasks | ≥50% |
+| Judge precision on a human-labeled sample | ≥0.90 before trusting a high threshold |
+
+## v1.0 gate
+
+Do not label the project stable until all of these exist:
+
+- A public golden-task set (100+ tasks) with human labels and published judge precision/recall.
+- A before/after token and cost benchmark on a reproducible repository.
+- End-to-end tests on Codex CLI, Claude Code, Cursor and OpenCode, pinned to client versions.
+- Packaging that does not require cloning (`uvx` and a Docker image).
+- Windows CI or an explicit POSIX-only support statement.
+- A decision on the stateless `2026-07-28` MCP revision: implement it, or document legacy-only support.
 
 ## Non-goals
 

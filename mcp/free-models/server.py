@@ -12,6 +12,7 @@ Modes
     server.py agent "..."         delegate a tool-using task to `opencode run`
     server.py cascade "..."       generate + judge, with an escalation verdict
     server.py stats [--days N]    escalation, cache hit rate and latency from the ledger
+    server.py doctor              check key, API, model catalog, ledger and opencode
     server.py models              print the configured model chain
     server.py --version           print version
 
@@ -25,7 +26,10 @@ Environment
     FRUGAL_JUDGE        default judge model
     FRUGAL_THRESHOLD    default judge acceptance threshold (0.8)
     FRUGAL_LEDGER       ledger path (default ~/.frugal-agents/ledger.jsonl)
+    FRUGAL_LEDGER_MAX_BYTES  rotate the ledger above this size (default 10 MB)
     FRUGAL_TIMEOUT      HTTP timeout in seconds (default 75)
+    FRUGAL_RETRIES      retries per model on 429/5xx (default 2)
+    FRUGAL_MAX_CONCURRENCY  concurrent MCP tool calls (default 4)
     FRUGAL_NO_LEDGER    set to 1 to disable the ledger
 """
 
@@ -34,23 +38,43 @@ from __future__ import annotations
 import json
 import math
 import os
+import random
 import re
+import shutil
+import signal
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from typing import Any
 
-VERSION = "0.2.0"
-PROTOCOL_VERSION = "2024-11-05"
+VERSION = "0.3.0"
+PROTOCOL_VERSION = "2025-11-25"
+
+# Legacy (session) protocol revisions this server can negotiate. The modern
+# 2026-07-28 stateless revision is not implemented yet; see
+# docs/07-harness-compatibility.md for the support matrix.
+SUPPORTED_PROTOCOLS = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"]
 SERVER_NAME = "free-models"
 
 DEFAULT_BASE_URL = "https://integrate.api.nvidia.com/v1"
 DEFAULT_MODEL = os.environ.get("FRUGAL_MODEL", "openai/gpt-oss-20b")
 DEFAULT_JUDGE = os.environ.get("FRUGAL_JUDGE", "google/gemma-4-31b-it")
-DEFAULT_THRESHOLD = float(os.environ.get("FRUGAL_THRESHOLD", "0.8"))
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.environ.get(name, str(default)))
+    except ValueError:
+        return default
+
+
+DEFAULT_THRESHOLD = max(0.0, min(1.0, _env_float("FRUGAL_THRESHOLD", 0.8)))
 
 # Tried in order when the requested model is gone (NIM rotates its catalog and
 # answers HTTP 410 for retired models) or returns empty content.
@@ -110,6 +134,10 @@ class RetryableError(RuntimeError):
     def __init__(self, message: str, status: int | None = None) -> None:
         super().__init__(message)
         self.status = status
+
+
+class CancelledError(FrugalError):
+    """The MCP client cancelled this request."""
 
 
 # --------------------------------------------------------------------------- #
@@ -194,6 +222,8 @@ def redact(text: str) -> str:
 # Ledger
 # --------------------------------------------------------------------------- #
 
+LEDGER_SCHEMA_VERSION = 1
+
 
 def ledger_path() -> str:
     return os.environ.get(
@@ -201,36 +231,82 @@ def ledger_path() -> str:
     )
 
 
+def ledger_max_bytes() -> int:
+    try:
+        return int(os.environ.get("FRUGAL_LEDGER_MAX_BYTES", str(10 * 1024 * 1024)))
+    except ValueError:
+        return 10 * 1024 * 1024
+
+
+@contextmanager
+def _ledger_lock(path: str):
+    """Serialize appends and rotation across processes (POSIX best effort)."""
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    handle = open(path + ".lock", "a+", encoding="utf-8")
+    locked = False
+    try:
+        try:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            locked = True
+        except (ImportError, OSError):
+            pass
+        yield
+    finally:
+        if locked:
+            try:
+                import fcntl
+
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            except (ImportError, OSError):
+                pass
+        handle.close()
+
+
+def _rotate_locked(path: str) -> None:
+    try:
+        if os.path.getsize(path) >= ledger_max_bytes():
+            os.replace(path, path + ".1")
+    except OSError:
+        pass
+
+
 def record(entry: dict[str, Any]) -> None:
     if os.environ.get("FRUGAL_NO_LEDGER") == "1":
         return
     try:
         path = ledger_path()
-        os.makedirs(os.path.dirname(path), exist_ok=True)
+        entry.setdefault("schema_version", LEDGER_SCHEMA_VERSION)
         entry["ts"] = round(time.time(), 3)
-        with open(path, "a", encoding="utf-8") as handle:
-            handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        line = json.dumps(entry, ensure_ascii=False)
+        with _ledger_lock(path):
+            _rotate_locked(path)
+            with open(path, "a", encoding="utf-8") as handle:
+                handle.write(line + "\n")
     except OSError:
         # The ledger is observability, never a reason to fail a request.
         pass
 
 
 def read_ledger(path: str | None = None) -> list[dict[str, Any]]:
+    path = path or ledger_path()
     rows: list[dict[str, Any]] = []
-    try:
-        with open(path or ledger_path(), "r", encoding="utf-8") as handle:
-            for line in handle:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    row = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if isinstance(row, dict):
-                    rows.append(row)
-    except OSError:
-        pass
+    for candidate in (path + ".1", path):
+        try:
+            with open(candidate, "r", encoding="utf-8") as handle:
+                for line in handle:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        row = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if isinstance(row, dict):
+                        rows.append(row)
+        except OSError:
+            continue
     return rows
 
 
@@ -339,6 +415,32 @@ def timeout_seconds() -> float:
         return 120.0
 
 
+def retry_count() -> int:
+    try:
+        return max(0, int(os.environ.get("FRUGAL_RETRIES", "2")))
+    except ValueError:
+        return 2
+
+
+def retry_delay(attempt: int) -> float:
+    """Exponential backoff with jitter, capped at 8 seconds."""
+    ceiling = min(8.0, 0.5 * (2**attempt))
+    return ceiling / 2 + random.uniform(0, ceiling / 2)
+
+
+def sleep_cancellable(seconds: float, cancel_event: threading.Event | None) -> None:
+    deadline = time.time() + seconds
+    while time.time() < deadline:
+        if cancel_event is not None and cancel_event.is_set():
+            raise CancelledError("request cancelled")
+        time.sleep(min(0.2, max(0.0, deadline - time.time())))
+
+
+def check_cancelled(cancel_event: threading.Event | None) -> None:
+    if cancel_event is not None and cancel_event.is_set():
+        raise CancelledError("request cancelled")
+
+
 def _int(value: Any) -> int:
     try:
         return int(value or 0)
@@ -422,6 +524,7 @@ def chat(
     max_tokens: int = 2048,
     temperature: float = 0.2,
     reasoning_effort: str | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "model": model,
@@ -444,6 +547,7 @@ def chat(
         method="POST",
     )
 
+    check_cancelled(cancel_event)
     try:
         with urllib.request.urlopen(request, timeout=timeout_seconds()) as response:
             data = json.loads(response.read().decode("utf-8"))
@@ -461,6 +565,8 @@ def chat(
         raise RetryableError(f"connection error from {model}: {error}", None) from error
     except json.JSONDecodeError as error:
         raise RetryableError(f"invalid JSON from {model}: {error}", None) from error
+
+    check_cancelled(cancel_event)
 
     try:
         choice = data["choices"][0]
@@ -491,8 +597,16 @@ def complete(
     max_tokens: int = 2048,
     temperature: float = 0.2,
     reasoning_effort: str | None = None,
+    exclude_models: list[str] | None = None,
+    cancel_event: threading.Event | None = None,
+    record_call: bool = True,
 ) -> dict[str, Any]:
-    """Call the free chain until one model returns usable text."""
+    """Call the free chain until one model returns usable text.
+
+    Retries 429/5xx with exponential backoff and jitter before moving on.
+    ``exclude_models`` keeps the judge from being the same model as the
+    generator when an alternative exists.
+    """
     prompt = redact(prompt)
     messages: list[dict[str, str]] = []
     if system:
@@ -502,56 +616,75 @@ def complete(
     failures: list[str] = []
     started = time.time()
 
-    candidates = chain_for(model)
+    excluded = set(exclude_models or [])
+    candidates = [item for item in chain_for(model) if item not in excluded]
+    if not candidates:  # only one model configured; independence impossible
+        candidates = chain_for(model)
+
     healthy = [item for item in candidates if not unhealthy(item)]
     if healthy:
         candidates = healthy
 
     for candidate in candidates:
-        try:
-            result = chat(
-                candidate,
-                messages,
-                max_tokens=max_tokens,
-                temperature=temperature,
-                reasoning_effort=reasoning_effort,
-            )
-            # Reasoning models can spend the whole budget thinking and return
-            # content: null. Retry once with a larger budget before giving up.
-            if not result["text"] and result["reasoning"]:
+        attempt = 0
+        while True:
+            check_cancelled(cancel_event)
+            try:
                 result = chat(
                     candidate,
                     messages,
-                    max_tokens=max(max_tokens * 2, 4096),
+                    max_tokens=max_tokens,
                     temperature=temperature,
                     reasoning_effort=reasoning_effort,
+                    cancel_event=cancel_event,
                 )
-            if not result["text"]:
-                failures.append(f"{candidate}: empty content ({result['finish_reason']})")
-                continue
+                # Reasoning models can spend the whole budget thinking and
+                # return content: null. Retry once with a larger budget.
+                if not result["text"] and result["reasoning"]:
+                    result = chat(
+                        candidate,
+                        messages,
+                        max_tokens=max(max_tokens * 2, 4096),
+                        temperature=temperature,
+                        reasoning_effort=reasoning_effort,
+                        cancel_event=cancel_event,
+                    )
+                if not result["text"]:
+                    failures.append(
+                        f"{candidate}: empty content ({result['finish_reason']})"
+                    )
+                    break
 
-            result.update(
-                {
-                    "requested_model": model or DEFAULT_MODEL,
-                    "latency_ms": int((time.time() - started) * 1000),
-                    "fallbacks": len(failures),
-                }
-            )
-            record(
-                {
-                    "tool": "free_ask",
-                    "model": result["model"],
-                    "usage": result["usage"],
-                    "latency_ms": result["latency_ms"],
-                    "fallbacks": len(failures),
-                }
-            )
-            return result
-        except RetryableError as error:
-            failures.append(str(error))
-            mark_unhealthy(candidate, str(error), error.status)
-        except FrugalError:
-            raise
+                result.update(
+                    {
+                        "requested_model": model or DEFAULT_MODEL,
+                        "latency_ms": int((time.time() - started) * 1000),
+                        "fallbacks": len(failures),
+                    }
+                )
+                if record_call:
+                    record(
+                        {
+                            "tool": "free_ask",
+                            "model": result["model"],
+                            "usage": result["usage"],
+                            "latency_ms": result["latency_ms"],
+                            "fallbacks": len(failures),
+                        }
+                    )
+                return result
+            except RetryableError as error:
+                failures.append(str(error))
+                if error.status in {429, 500, 502, 503, 504} and attempt < retry_count():
+                    sleep_cancellable(retry_delay(attempt), cancel_event)
+                    attempt += 1
+                    continue
+                mark_unhealthy(candidate, str(error), error.status)
+                break
+            except CancelledError:
+                raise
+            except FrugalError:
+                raise
 
     raise FrugalError("all free models failed:\n- " + "\n- ".join(failures))
 
@@ -566,12 +699,14 @@ def free_ask(
     model: str | None = None,
     max_tokens: int = 2048,
     temperature: float = 0.2,
+    cancel_event: threading.Event | None = None,
 ) -> dict[str, Any]:
     result = complete(
         prompt,
         model=model,
         max_tokens=max_tokens,
         temperature=temperature,
+        cancel_event=cancel_event,
     )
     return {
         "answer": result["text"],
@@ -582,7 +717,7 @@ def free_ask(
     }
 
 
-def parse_verdict(raw: str) -> dict[str, Any]:
+def parse_verdict(raw: str, threshold: float = DEFAULT_THRESHOLD) -> dict[str, Any]:
     """Extract the judge JSON even when the model wraps it in prose or fences."""
     match = re.search(r"\{[\s\S]*\}", raw)
     if not match:
@@ -601,7 +736,7 @@ def parse_verdict(raw: str) -> dict[str, Any]:
 
     verdict = str(data.get("verdict", "")).lower().strip()
     if verdict not in {"accept", "reject"}:
-        verdict = "accept" if score is not None and score >= DEFAULT_THRESHOLD else "reject"
+        verdict = "accept" if score is not None and score >= threshold else "reject"
 
     issues = data.get("issues") or []
     if not isinstance(issues, list):
@@ -616,10 +751,18 @@ def free_cascade(
     judge: str | None = None,
     threshold: float = DEFAULT_THRESHOLD,
     max_tokens: int = 2048,
+    cancel_event: threading.Event | None = None,
 ) -> dict[str, Any]:
     """Generate with a free model, then have a different free model review it."""
     started = time.time()
-    generated = complete(task, model=generator, max_tokens=max_tokens)
+    threshold = max(0.0, min(1.0, float(threshold)))
+    generated = complete(
+        task,
+        model=generator,
+        max_tokens=max_tokens,
+        cancel_event=cancel_event,
+        record_call=False,
+    )
 
     judge_prompt = (
         f"TASK:\n{task}\n\n"
@@ -632,16 +775,27 @@ def free_cascade(
         system=JUDGE_SYSTEM,
         max_tokens=700,
         temperature=0.0,
+        exclude_models=[generated["model"]],
+        cancel_event=cancel_event,
+        record_call=False,
     )
-    verdict = parse_verdict(review["text"])
+    verdict = parse_verdict(review["text"], threshold)
     accepted = verdict["verdict"] == "accept" and (
         verdict["score"] is None or verdict["score"] >= threshold
+    )
+    judge_independent = review["model"] != generated["model"]
+    warnings = (
+        []
+        if judge_independent
+        else ["judge fell back to the generator model; review is not independent"]
     )
 
     result = {
         "accepted": accepted,
         "score": verdict["score"],
         "issues": verdict["issues"],
+        "warnings": warnings,
+        "judge_independent": judge_independent,
         "answer": generated["text"],
         "generator": generated["model"],
         "judge": review["model"],
@@ -653,6 +807,7 @@ def free_cascade(
             "tool": "free_cascade",
             "model": generated["model"],
             "judge": review["model"],
+            "judge_independent": judge_independent,
             "usage": merge_usage(generated["usage"], review["usage"]),
             "score": verdict["score"],
             "accepted": accepted,
@@ -663,14 +818,30 @@ def free_cascade(
     return result
 
 
+def _terminate(proc: subprocess.Popen) -> None:
+    """Stop a worker and its children (best effort, cross-platform)."""
+    try:
+        if hasattr(os, "killpg"):
+            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+        else:
+            proc.terminate()
+    except (ProcessLookupError, OSError):
+        pass
+
+
 def free_agent(
     task: str,
     model: str | None = None,
     cwd: str | None = None,
     extra_args: list[str] | None = None,
     timeout: int = 600,
+    cancel_event: threading.Event | None = None,
 ) -> dict[str, Any]:
-    """Delegate a task that needs file tools to an `opencode run` worker."""
+    """Delegate a task that needs file tools to an `opencode run` worker.
+
+    The task is written to stdin, not argv, so it does not leak through the
+    process list. Cancellation terminates the worker's process group.
+    """
     selected = model or DEFAULT_MODEL
     command = [
         "opencode",
@@ -680,27 +851,91 @@ def free_agent(
         "--format",
         "json",
         *(extra_args or []),
-        redact(task),
     ]
 
-    try:
-        proc = subprocess.run(
-            command,
-            cwd=cwd or None,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
+    if cwd is not None and not os.path.isabs(cwd):
+        raise FrugalError("free_agent cwd must be an absolute path")
+    if cwd is not None and not os.path.isdir(cwd):
+        raise FrugalError(f"free_agent cwd does not exist: {cwd}")
+    if shutil.which("opencode") is None:
+        raise FrugalError(
+            "the `opencode` CLI was not found in PATH; install it from "
+            "https://opencode.ai to use free_agent"
         )
+
+    popen_kwargs: dict[str, Any] = {
+        "cwd": cwd or None,
+        "stdin": subprocess.PIPE,
+        "stdout": subprocess.PIPE,
+        "stderr": subprocess.PIPE,
+        "text": True,
+    }
+    if os.name == "posix":
+        popen_kwargs["start_new_session"] = True
+    else:
+        popen_kwargs["creationflags"] = getattr(
+            subprocess, "CREATE_NEW_PROCESS_GROUP", 0
+        )
+
+    try:
+        proc = subprocess.Popen(command, **popen_kwargs)
     except FileNotFoundError as error:
         raise FrugalError(
             "the `opencode` CLI was not found in PATH; install it from "
             "https://opencode.ai to use free_agent"
         ) from error
-    except subprocess.TimeoutExpired as error:
-        raise FrugalError(f"free_agent timed out after {timeout}s") from error
+
+    stdout_chunks: list[str] = []
+    stderr_chunks: list[str] = []
+    readers = [
+        threading.Thread(
+            target=lambda: stdout_chunks.append(proc.stdout.read() if proc.stdout else ""),
+            daemon=True,
+        ),
+        threading.Thread(
+            target=lambda: stderr_chunks.append(proc.stderr.read() if proc.stderr else ""),
+            daemon=True,
+        ),
+    ]
+    for reader in readers:
+        reader.start()
+
+    try:
+        if proc.stdin is not None:
+            try:
+                proc.stdin.write(redact(task))
+                proc.stdin.close()
+            except (BrokenPipeError, OSError):
+                pass
+
+        deadline = time.time() + timeout
+        while proc.poll() is None:
+            if cancel_event is not None and cancel_event.is_set():
+                _terminate(proc)
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                raise CancelledError("free_agent cancelled")
+            if time.time() > deadline:
+                _terminate(proc)
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                raise FrugalError(f"free_agent timed out after {timeout}s")
+            time.sleep(0.1)
+    finally:
+        for reader in readers:
+            reader.join(timeout=2)
+        if proc.poll() is None:
+            proc.kill()
+
+    stdout = "".join(stdout_chunks)
+    stderr = "".join(stderr_chunks)
 
     texts: list[str] = []
-    for line in proc.stdout.splitlines():
+    for line in stdout.splitlines():
         line = line.strip()
         if not line.startswith("{"):
             continue
@@ -713,9 +948,9 @@ def free_agent(
             texts.append(part.get("text", ""))
 
     output = "\n".join(texts).strip()
-    if proc.returncode != 0 and not output:
+    if proc.returncode not in (0, None) and not output:
         raise FrugalError(
-            f"opencode exited with {proc.returncode}: {proc.stderr.strip()[:400]}"
+            f"opencode exited with {proc.returncode}: {stderr.strip()[:400]}"
         )
 
     record(
@@ -731,7 +966,7 @@ def free_agent(
         "answer": output,
         "model": selected,
         "returncode": proc.returncode,
-        "stderr": proc.stderr.strip()[-400:],
+        "stderr": stderr.strip()[-400:],
     }
 
 
@@ -747,8 +982,16 @@ TOOLS = [
             "regex, docstrings, explanations, small refactors. Never send secrets. "
             "Falls back across the free model chain automatically."
         ),
+        "annotations": {
+            "title": "Free text completion",
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": False,
+            "openWorldHint": True,
+        },
         "inputSchema": {
             "type": "object",
+            "additionalProperties": False,
             "properties": {
                 "prompt": {"type": "string", "description": "The full task text."},
                 "model": {
@@ -768,8 +1011,16 @@ TOOLS = [
             "free NIM model. Use for isolated implementations, tests, and small "
             "refactors. Pass an absolute cwd so the worker edits the right project."
         ),
+        "annotations": {
+            "title": "Free tool-using worker",
+            "readOnlyHint": False,
+            "destructiveHint": True,
+            "idempotentHint": False,
+            "openWorldHint": True,
+        },
         "inputSchema": {
             "type": "object",
+            "additionalProperties": False,
             "properties": {
                 "task": {"type": "string", "description": "What the worker must do."},
                 "model": {"type": "string", "description": "Optional NIM model id."},
@@ -791,8 +1042,16 @@ TOOLS = [
             "using a strict checklist. Returns accepted/score/issues and an "
             "escalate_to_paid flag. Use before spending paid tokens."
         ),
+        "annotations": {
+            "title": "Free generator + independent judge",
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": False,
+            "openWorldHint": True,
+        },
         "inputSchema": {
             "type": "object",
+            "additionalProperties": False,
             "properties": {
                 "task": {"type": "string", "description": "The task to solve."},
                 "generator": {"type": "string", "description": "Optional generator model id."},
@@ -811,13 +1070,18 @@ TOOLS = [
 ]
 
 
-def tool_call(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+def tool_call(
+    name: str,
+    arguments: dict[str, Any],
+    cancel_event: threading.Event | None = None,
+) -> dict[str, Any]:
     if name == "free_ask":
         return free_ask(
             str(arguments["prompt"]),
             model=arguments.get("model"),
             max_tokens=int(arguments.get("max_tokens", 2048)),
             temperature=float(arguments.get("temperature", 0.2)),
+            cancel_event=cancel_event,
         )
     if name == "free_agent":
         return free_agent(
@@ -826,6 +1090,7 @@ def tool_call(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
             cwd=arguments.get("cwd"),
             extra_args=arguments.get("extra_args"),
             timeout=int(arguments.get("timeout", 600)),
+            cancel_event=cancel_event,
         )
     if name == "free_cascade":
         return free_cascade(
@@ -834,13 +1099,18 @@ def tool_call(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
             judge=arguments.get("judge"),
             threshold=float(arguments.get("threshold", DEFAULT_THRESHOLD)),
             max_tokens=int(arguments.get("max_tokens", 2048)),
+            cancel_event=cancel_event,
         )
     raise FrugalError(f"unknown tool: {name}")
 
 
+_SEND_LOCK = threading.Lock()
+
+
 def send(message: dict[str, Any]) -> None:
-    sys.stdout.write(json.dumps(message, ensure_ascii=False) + "\n")
-    sys.stdout.flush()
+    with _SEND_LOCK:
+        sys.stdout.write(json.dumps(message, ensure_ascii=False) + "\n")
+        sys.stdout.flush()
 
 
 def reply(request_id: Any, result: Any) -> None:
@@ -851,48 +1121,135 @@ def reply_error(request_id: Any, code: int, message: str) -> None:
     send({"jsonrpc": "2.0", "id": request_id, "error": {"code": code, "message": message}})
 
 
-def handle(request: dict[str, Any]) -> None:
-    request_id = request.get("id")
-    method = request.get("method", "")
-
-    # Notifications carry no id and must not be answered.
-    if request_id is None:
+def progress_notification(token: Any, value: float, total: float, message: str) -> None:
+    if token is None:
         return
-
-    if method == "initialize":
-        reply(
-            request_id,
-            {
-                "protocolVersion": PROTOCOL_VERSION,
-                "capabilities": {"tools": {"listChanged": False}},
-                "serverInfo": {"name": SERVER_NAME, "version": VERSION},
+    send(
+        {
+            "jsonrpc": "2.0",
+            "method": "notifications/progress",
+            "params": {
+                "progressToken": token,
+                "progress": value,
+                "total": total,
+                "message": message,
             },
-        )
-        return
+        }
+    )
 
-    if method == "ping":
-        reply(request_id, {})
-        return
 
-    if method == "tools/list":
-        reply(request_id, {"tools": TOOLS})
-        return
+def max_concurrency() -> int:
+    try:
+        return max(1, int(os.environ.get("FRUGAL_MAX_CONCURRENCY", "4")))
+    except ValueError:
+        return 4
 
-    if method == "tools/call":
-        params = request.get("params") or {}
+
+def negotiate_protocol(requested: Any) -> str:
+    """Answer with the client's revision when supported, else the newest we know."""
+    if isinstance(requested, str) and requested in SUPPORTED_PROTOCOLS:
+        return requested
+    return PROTOCOL_VERSION
+
+
+class McpServer:
+    """Concurrent stdio MCP server.
+
+    Tool calls run on a bounded thread pool so ping, cancellation and progress
+    keep working while a free_agent worker is busy.
+    """
+
+    def __init__(self) -> None:
+        self.executor = ThreadPoolExecutor(max_workers=max_concurrency())
+        self.inflight: dict[Any, threading.Event] = {}
+        self.lock = threading.Lock()
+
+    def cancel(self, request_id: Any) -> None:
+        with self.lock:
+            event = self.inflight.get(request_id)
+        if event is not None:
+            event.set()
+
+    def handle(self, request: dict[str, Any]) -> None:
+        request_id = request.get("id")
+        method = request.get("method", "")
+
+        if method == "notifications/cancelled":
+            params = request.get("params") or {}
+            self.cancel(params.get("requestId"))
+            return
+
+        # Other notifications carry no id and must not be answered.
+        if request_id is None:
+            return
+
+        if method == "initialize":
+            params = request.get("params") or {}
+            requested = params.get("protocolVersion")
+            version = negotiate_protocol(requested)
+            if requested and requested != version:
+                print(
+                    f"free-models: client requested MCP {requested}; "
+                    f"replying with {version}",
+                    file=sys.stderr,
+                )
+            reply(
+                request_id,
+                {
+                    "protocolVersion": version,
+                    "capabilities": {"tools": {"listChanged": False}},
+                    "serverInfo": {"name": SERVER_NAME, "version": VERSION},
+                },
+            )
+            return
+
+        if method == "ping":
+            reply(request_id, {})
+            return
+
+        if method == "tools/list":
+            reply(request_id, {"tools": TOOLS})
+            return
+
+        if method == "tools/call":
+            params = request.get("params") or {}
+            event = threading.Event()
+            with self.lock:
+                self.inflight[request_id] = event
+            self.executor.submit(self._run_tool, request_id, params, event)
+            return
+
+        reply_error(request_id, -32601, f"method not found: {method}")
+
+    def _run_tool(
+        self,
+        request_id: Any,
+        params: dict[str, Any],
+        cancel_event: threading.Event,
+    ) -> None:
         name = params.get("name", "")
         arguments = params.get("arguments") or {}
+        token = (params.get("_meta") or {}).get("progressToken")
         try:
-            result = tool_call(name, arguments)
+            if cancel_event.is_set():
+                raise CancelledError("request cancelled")
+            progress_notification(token, 0, 1, f"{name} started")
+            result = tool_call(name, arguments, cancel_event=cancel_event)
+            progress_notification(token, 1, 1, f"{name} finished")
             reply(
                 request_id,
                 {
                     "content": [
-                        {"type": "text", "text": json.dumps(result, ensure_ascii=False, indent=2)}
+                        {
+                            "type": "text",
+                            "text": json.dumps(result, ensure_ascii=False, indent=2),
+                        }
                     ],
                     "isError": False,
                 },
             )
+        except CancelledError:
+            reply_error(request_id, -32800, "request cancelled")
         except FrugalError as error:
             reply(
                 request_id,
@@ -905,26 +1262,38 @@ def handle(request: dict[str, Any]) -> None:
             reply(
                 request_id,
                 {
-                    "content": [{"type": "text", "text": f"error: {type(error).__name__}: {error}"}],
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": f"error: {type(error).__name__}: {error}",
+                        }
+                    ],
                     "isError": True,
                 },
             )
-        return
+        finally:
+            with self.lock:
+                self.inflight.pop(request_id, None)
 
-    reply_error(request_id, -32601, f"method not found: {method}")
+    def close(self) -> None:
+        self.executor.shutdown(wait=True)
 
 
 def serve() -> int:
-    for line in sys.stdin:
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            request = json.loads(line)
-        except json.JSONDecodeError:
-            reply_error(None, -32700, "parse error")
-            continue
-        handle(request)
+    server = McpServer()
+    try:
+        for line in sys.stdin:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                request = json.loads(line)
+            except json.JSONDecodeError:
+                reply_error(None, -32700, "parse error")
+                continue
+            server.handle(request)
+    finally:
+        server.close()
     return 0
 
 
@@ -935,6 +1304,109 @@ def serve() -> int:
 
 def usage() -> str:
     return __doc__ or ""
+
+
+def _mask(secret: str) -> str:
+    if len(secret) <= 8:
+        return "***"
+    return f"{secret[:4]}…{secret[-4:]}"
+
+
+def doctor() -> int:
+    """Check key, network, model catalog, ledger and opencode in one command."""
+    failures = 0
+
+    def report(ok: bool, label: str, detail: str = "", warn: bool = False) -> None:
+        nonlocal failures
+        if not ok and not warn:
+            failures += 1
+        mark = "ok" if ok else ("warn" if warn else "fail")
+        print(f"[{mark:4}] {label}" + (f" — {detail}" if detail else ""))
+
+    if sys.version_info >= (3, 10):
+        report(True, "python", sys.version.split()[0])
+    else:
+        report(False, "python", f"{sys.version.split()[0]} (3.10+ required)")
+
+    try:
+        key = load_api_key()
+        report(True, "NIM key", _mask(key))
+    except FrugalError as error:
+        report(False, "NIM key", str(error))
+        key = ""
+
+    catalog: set[str] = set()
+    if key:
+        started = time.time()
+        try:
+            request = urllib.request.Request(
+                f"{base_url()}/models",
+                headers={
+                    "Authorization": f"Bearer {key}",
+                    "Accept": "application/json",
+                    "User-Agent": f"frugal-agents/{VERSION}",
+                },
+            )
+            with urllib.request.urlopen(request, timeout=15) as response:
+                data = json.loads(response.read().decode("utf-8"))
+            catalog = {
+                str(item.get("id"))
+                for item in (data.get("data") or [])
+                if isinstance(item, dict) and item.get("id")
+            }
+            report(
+                True,
+                "NIM API",
+                f"{base_url()} · {len(catalog)} models · "
+                f"{int((time.time() - started) * 1000)} ms",
+            )
+        except Exception as error:  # noqa: BLE001 - doctor reports, never raises
+            report(False, "NIM API", f"{base_url()} · {error}")
+
+    if catalog:
+        missing = [model for model in chain_for(None) if model not in catalog]
+        if missing:
+            report(False, "model chain", "missing: " + ", ".join(missing), warn=True)
+        else:
+            report(True, "model chain", f"{len(chain_for(None))} models available")
+    elif key:
+        report(False, "model chain", "skipped: catalog unavailable", warn=True)
+
+    path = ledger_path()
+    directory = os.path.dirname(path) or "."
+    probe = directory
+    while not os.path.exists(probe) and os.path.dirname(probe) != probe:
+        probe = os.path.dirname(probe)
+    if os.access(probe, os.W_OK):
+        report(True, "ledger", path)
+    else:
+        report(False, "ledger", f"{path} is not writable")
+    if os.path.exists(path) and os.path.getsize(path) >= ledger_max_bytes():
+        report(False, "ledger size", "above the rotation limit", warn=True)
+
+    binary = shutil.which("opencode")
+    if not binary:
+        report(False, "opencode", "not in PATH (free_agent unavailable)", warn=True)
+    else:
+        try:
+            version = subprocess.run(
+                [binary, "--version"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            ).stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            version = "installed"
+        report(True, "opencode", f"{version} · {binary}")
+
+    if DEFAULT_JUDGE == DEFAULT_MODEL:
+        report(False, "judge", "same as generator; independence is impossible", warn=True)
+
+    print(
+        "\nresult: "
+        + ("OK" if failures == 0 else f"{failures} check(s) failed")
+    )
+    return 0 if failures == 0 else 1
 
 
 def main(argv: list[str]) -> int:
@@ -953,6 +1425,8 @@ def main(argv: list[str]) -> int:
         print(f"judge:     {DEFAULT_JUDGE}")
         print(f"chain:     {', '.join(chain_for(None))}")
         return 0
+    if command == "doctor":
+        return doctor()
     if command == "stats":
         days: int | None = None
         if "--days" in argv:

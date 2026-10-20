@@ -53,6 +53,8 @@ Never delegate:
 
 When `free_cascade` returns `escalate_to_paid: true`, take the task, the free answer, and the `issues` list. Do not take the conversation, the logs, or the whole repository.
 
+If `judge_independent` is `false`, the judge was the same model as the generator. Treat the review as a draft, not as an independent gate.
+
 When you delegate, keep the prompt under 20 lines and ask for a compact, structured result.
 
 ### Prohibited
@@ -64,7 +66,7 @@ When you delegate, keep the prompt under 20 lines and ask for a compact, structu
 
 ### Measurement
 
-Every free call is recorded in `~/.frugal-agents/ledger.jsonl`. Review escalation rate and free share weekly. Target: 10–20% escalation, ≥50% of tasks handled free.
+Every free call is recorded in `~/.frugal-agents/ledger.jsonl`. Review escalation rate weekly. Target: 10–20% escalation. Free share needs a paid-token denominator from your provider's billing export; the ledger records only free calls.
 
 ### Caching
 

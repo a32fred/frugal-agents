@@ -29,7 +29,7 @@ task
 
 Properties:
 
-- **Independent judge.** Different model family from the generator, temperature 0, structured JSON verdict.
+- **Independent judge.** Different model family from the generator, temperature 0, structured JSON verdict. The server excludes the generator from the judge call and flags `judge_independent: false` when no alternative model exists.
 - **Evidence-carrying escalation.** The paid model sees a compact package, not the conversation. This caps handoff cost at roughly 10% of the saved tokens.
 - **No silent downgrade.** T2 work never enters the free path, regardless of judge score.
 
@@ -82,21 +82,37 @@ A free model coordinates and calls `codex exec` only for hard sub-questions.
 ## 5. Server internals
 
 ```
-MCP client ──stdio JSON-RPC──► server.py
-                                 │
+MCP client ──stdio JSON-RPC──► McpServer (bounded thread pool)
+                                 │  ping · progress · cancellation
                                  ├─ redact()          strip credential shapes
                                  ├─ chain_for()       requested model + fallbacks
-                                 ├─ unhealthy()       skip recently failed models
-                                 ├─ chat()            POST /chat/completions
-                                 ├─ parse_verdict()   tolerant JSON extraction
-                                 └─ record()          append JSONL ledger
+                                 ├─ complete()        retries, backoff, cooldown
+                                 ├─ free_cascade()    generator ≠ judge guard
+                                 ├─ free_agent()      stdin task, process group
+                                 └─ record()          schema, lock, rotation
 ```
 
-### Fallback chain
+### Concurrency and cancellation
+
+The server reads stdin on the main thread and runs tool calls on a pool of four workers (`FRUGAL_MAX_CONCURRENCY`). This keeps `ping` responsive and lets a second request make progress while a long `free_agent` runs.
+
+- `notifications/cancelled` sets a per-request event.
+- HTTP calls check the event before the request, after the response, and between retries. A socket read already in progress is not aborted.
+- `free_agent` polls every 100 ms and terminates the worker's process group, so child processes do not survive a cancel.
+- A cancelled request receives JSON-RPC error `-32800`. The ledger may still contain the usage that actually happened.
+- If the client supplies `_meta.progressToken`, the server emits `notifications/progress` at start and finish. It does not stream tokens.
+
+### Fallback chain and backoff
 
 Default order: `openai/gpt-oss-20b` → `google/gemma-4-31b-it` → `nvidia/nemotron-3.5-lightning-30b-a3b` → `z-ai/glm-5.3` → `deepseek-ai/deepseek-v4.1-flash`.
 
-On HTTP 404/410 (retired model), 408/409/425/429, or 5xx, the next model is tried. A failing model is marked unhealthy for 15 minutes (retired) or 3 minutes (transient). This prevents one dead catalog entry from adding a timeout to every call.
+On 429/5xx, the server retries the same model up to `FRUGAL_RETRIES` times (default 2) with exponential backoff plus jitter, capped at 8 seconds, before moving to the next model. On 404/410 (retired model), it moves on immediately. A failing model is marked unhealthy for 15 minutes (retired) or 3 minutes (transient). This prevents one dead catalog entry from adding a timeout to every call.
+
+### Judge independence
+
+`free_cascade` passes `exclude_models=[generated_model]` to the judge call. If the chain has another healthy model, the judge cannot be the generator. If it has no alternative, the review still runs but the result sets `judge_independent: false`, adds a warning, and the ledger records the same flag. The server never claims an independent review it did not get.
+
+The per-call `threshold` is used both to interpret a missing verdict and to make the final accept/reject decision. A malformed verdict falls back to the explicit threshold, not the global default.
 
 ### Reasoning-model quirk
 
@@ -104,45 +120,55 @@ Some models spend the entire `max_tokens` budget on reasoning and return `conten
 
 ### Ledger
 
-One JSON object per line, with usage normalized across providers:
+One JSON object per line, with usage normalized across providers and a schema version:
 
 ```json
-{"ts": 1792496191.2, "tool": "free_cascade", "model": "openai/gpt-oss-20b",
- "judge": "google/gemma-4-31b-it", "usage": {"prompt_tokens": 71, "completion_tokens": 47,
- "cached_tokens": 0, "cache_write_tokens": 0, "reasoning_tokens": 0, "cache_hit_rate": 0.0},
+{"schema_version": 1, "ts": 1792496191.2, "tool": "free_cascade",
+ "model": "openai/gpt-oss-20b", "judge": "google/gemma-4-31b-it",
+ "judge_independent": true,
+ "usage": {"prompt_tokens": 71, "completion_tokens": 47, "cached_tokens": 0,
+ "cache_write_tokens": 0, "reasoning_tokens": 0, "cache_hit_rate": 0.0},
  "score": 1.0, "accepted": true, "escalate_to_paid": false, "latency_ms": 10528}
 ```
 
+Cascades write one record with merged generator + judge usage; the internal calls do not write separate `free_ask` rows, which keeps `stats` from double-counting. Appends take a POSIX `flock` and rotate to `ledger.jsonl.1` at 10 MB (`FRUGAL_LEDGER_MAX_BYTES`). `stats` reads the rotated file and the current file, but old pre-0.3.0 rows have no `schema_version`; compare like with like.
+
 `normalize_usage()` accepts OpenAI/NIM (`prompt_tokens_details.cached_tokens`), DeepSeek (`prompt_cache_hit_tokens`) and Anthropic (`cache_read_input_tokens`, `cache_creation_input_tokens`) shapes. Cascades sum generator and judge usage.
 
-Use `server.py stats` to compute escalation rate, cache hit rate, model mix and p95 latency. See [`05-token-glossary.md`](05-token-glossary.md) for the terms and [`06-prompt-caching.md`](06-prompt-caching.md) for the caching mechanics.
+Use `server.py doctor` to check the key, endpoint, catalog, ledger and worker before debugging a model failure. Use `server.py stats` to compute escalation rate, cache hit rate, model mix and p95 latency. See [`05-token-glossary.md`](05-token-glossary.md) for the terms and [`06-prompt-caching.md`](06-prompt-caching.md) for the caching mechanics.
 
 ## 6. Security model
 
 | Risk | Control |
 |---|---|
 | Credentials pasted into a prompt | `redact()` strips common token shapes before egress |
+| Task text exposed in the process list | `free_agent` writes the task to the worker's stdin, not argv |
 | Proprietary code sent to a free cloud tier | Explicit policy: free tiers never receive `.env`, customer data, or unreleased security work; T2 handles it |
-| Prompt injection through repository content | Free workers run with the same sandbox/permissions as any agent; review diffs, not prose |
+| Prompt injection through repository content | Free workers run with the same sandbox/permissions as any agent; review diffs, not prose. There is no filesystem or network isolation. |
 | Silent data retention by the provider | Use a self-hosted endpoint (`NIM_BASE_URL`) when retention matters |
-| Runaway worker | `free_agent` timeout, per-call timeout, and the ledger make cost/time visible |
+| Runaway worker | `free_agent` timeout, cancellation kills the process group, and the ledger makes time visible |
+| Ledger privacy | Records contain metadata and `cwd`, never prompts or answers; protect the file like shell history |
+| Concurrent ledger writers | POSIX `flock` plus a schema version; Windows has no lock |
 
-Redaction is a backstop. The policy is the control.
+Redaction is a backstop. The policy is the control. See [`SECURITY.md`](../SECURITY.md) for the full threat model.
 
 ## 7. Failure modes and responses
 
 | Symptom | Likely cause | Action |
 |---|---|---|
-| `all free models failed` | catalog rotation or key invalid | check `server.py models`, refresh the model list, verify `NIM_API_KEY` |
+| `all free models failed` | catalog rotation or key invalid | run `server.py doctor`, refresh the model list, verify `NIM_API_KEY` |
 | Empty answers | reasoning consumed the budget | handled by retry; raise `max_tokens` for very small budgets |
 | Judge rejects everything | rubric too strict or wrong model | inspect ledger scores; lower threshold or change judge |
+| `judge_independent: false` | the chain has no alternative to the generator | add a second free model to `FRUGAL_CHAIN`; do not treat that review as independent |
 | Escalation rate > 30% | tasks are harder than T1, or judge is strict | re-tier the work; tighten the task prompt; keep the work paid |
-| `free_agent` edits the wrong repo | missing `cwd` | always pass an absolute `cwd` |
-| Latency spikes | a slow fallback is being retried | cooldown handles repeat failures; check ledger latency |
+| `free_agent` edits the wrong repo | missing `cwd` | the server rejects relative or missing paths; pass an absolute `cwd` |
+| Latency spikes | a slow fallback is being retried | backoff and cooldown cap repeat failures; check ledger latency |
+| Stats look inflated | pre-0.3.0 rows logged cascade parts separately | filter to `schema_version` 1 or delete old rows |
 
 ## 8. Extension points
 
 - **New provider:** set `NIM_BASE_URL` to any OpenAI-compatible endpoint.
 - **New judge rubric:** edit `JUDGE_SYSTEM` or pass a task-specific checklist.
 - **New tier:** add a prefix or a tool; the policy lives in `AGENTS.md`.
-- **Parallelism:** run `free_agent` workers in separate worktrees (path C).
+- **New protocol revision:** add it to `SUPPORTED_PROTOCOLS` after implementing its lifecycle. The stateless `2026-07-28` revision needs a transport rewrite, not a version string.
+- **Parallelism:** run `free_agent` workers in separate worktrees (path C); keep the MCP concurrency at 2–4 to respect free-tier rate limits.

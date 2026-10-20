@@ -4,10 +4,11 @@ Thanks for considering a contribution. This project is deliberately small: a pol
 
 ## What is most useful
 
-1. **Real measurements.** Ledger summaries showing free share, escalation rate, and latency from an actual repository. Open an issue with the numbers and the task mix.
+1. **Real measurements.** Ledger summaries plus a paid-token baseline showing free share, escalation rate, and latency from an actual repository. Open an issue with the numbers and the task mix.
 2. **Judge improvements.** Rubrics or checklists that lowered escalation rate without raising the defect rate.
-3. **Provider adapters.** Notes or patches for other OpenAI-compatible free tiers.
-4. **Bug reports with a trace.** Include the `server.py models` output and the failing tool result, with secrets removed.
+3. **Harness reports.** A client version, the negotiated protocol, and the result of `initialize`, `tools/list`, one call and one cancellation.
+4. **Provider adapters.** Notes or patches for other OpenAI-compatible free tiers.
+5. **Bug reports with a trace.** Include the `server.py doctor` output and the failing tool result, with secrets removed.
 
 ## Ground rules
 
@@ -23,6 +24,7 @@ git clone https://github.com/a32fred/frugal-agents.git
 cd frugal-agents/mcp/free-models
 
 python3 -m unittest discover -s tests -p "test_*.py" -v   # no key needed
+python3 tests/mcp_sdk_smoke.py                             # optional; pip install mcp
 bash tests/smoke_test.sh                                   # needs NIM_API_KEY
 ```
 

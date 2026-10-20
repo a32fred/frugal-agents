@@ -5,6 +5,46 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-20
+
+Hardening release. No new routing features; the goal was to remove defects that made the prototype unsafe to automate.
+
+### Added
+
+- `server.py doctor`: checks Python, key, NIM endpoint, model catalog, ledger writability, `opencode` and judge independence.
+- Concurrent MCP server: tool calls run on a bounded thread pool (`FRUGAL_MAX_CONCURRENCY`, default 4), so `ping`, progress and cancellation work during long calls.
+- `notifications/cancelled` support with JSON-RPC error `-32800`; `free_agent` terminates the worker's process group.
+- Progress notifications when the client supplies `_meta.progressToken`.
+- Protocol negotiation for `2024-11-05`, `2025-03-26`, `2025-06-18` and `2025-11-25`.
+- Tool annotations: read-only hints for `free_ask`/`free_cascade`, destructive hint for `free_agent`.
+- Exponential backoff with jitter for 429/5xx, capped at 8 seconds, before falling through the chain.
+- Ledger `schema_version`, POSIX `flock`, 10 MB rotation to `.1`, and reads that include the rotated file.
+- `tests/mcp_sdk_smoke.py` plus a CI job that installs the official MCP Python SDK and performs `initialize` + `tools/list`.
+- `docs/07-harness-compatibility.md`: protocol revisions, tested/untested client matrix, configs for six clients, cancellation/timeout behaviour.
+- `SECURITY.md`: threat model, deployment guidance and explicit non-goals.
+- README "Status & maturity" section and v1.0 gates.
+- 14 new unit tests (39 total).
+
+### Changed
+
+- `free_agent` writes the task to the worker's stdin instead of argv, so it no longer appears in the process list.
+- `free_agent` rejects relative or missing `cwd` paths before spawning the worker.
+- `free_cascade` writes one ledger record with merged usage; internal generator and judge calls no longer emit separate `free_ask` rows.
+- The judge call excludes the generator model; results carry `judge_independent` and `warnings`.
+- `parse_verdict()` accepts and applies the per-call threshold.
+- README headline, savings table and FAQ now separate published research from unbenchmarked hypotheses.
+- Architecture and playbook document concurrency, cancellation, backoff, judge independence and ledger rotation.
+- Key-file examples use `/absolute/path/to/nvidia-key` placeholders.
+
+### Fixed
+
+- Judge could silently be the same model as the generator after a fallback.
+- A per-call threshold was ignored when the judge omitted an explicit verdict.
+- A long `free_agent` call blocked `ping` and cancellation on the stdio server.
+- Concurrent processes could interleave ledger writes, and the ledger grew without bound.
+- `stats` double-counted cascade usage because generator and judge calls were also logged as `free_ask`.
+- 429/5xx responses moved to the next model without a retry.
+
 ## [0.2.0] - 2026-10-20
 
 ### Added
@@ -43,6 +83,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Unit tests (no key required) and a live smoke test.
 - GitHub Actions CI across Python 3.10, 3.12, and 3.13.
 
-[Unreleased]: https://github.com/a32fred/frugal-agents/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/a32fred/frugal-agents/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/a32fred/frugal-agents/releases/tag/v0.3.0
 [0.2.0]: https://github.com/a32fred/frugal-agents/releases/tag/v0.2.0
 [0.1.0]: https://github.com/a32fred/frugal-agents/releases/tag/v0.1.0
