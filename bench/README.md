@@ -113,8 +113,8 @@ How to read this:
   rate are close to, but not clearly above, the H1 thresholds. With 20 core
   decisions, one wrong answer changes the false-accept rate by 5 percentage
   points. Do not use this as a production-grade gate.
-- **One stress cascade failed on transport**, not on content. The explorer
-  result shows model timeouts, not a grader error.
+- **One stress cascade failed on transport**, not on content. The model chain
+  timed out on that call; the grader never saw an answer.
 
 ## Run it
 
