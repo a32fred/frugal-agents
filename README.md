@@ -213,6 +213,8 @@ The rule behind the table: **the paid model decides and reviews; free models pro
 - **Task text is not in the process list.** `free_agent` writes the task to the worker's stdin instead of argv; cancelling the MCP request terminates the worker's process group.
 - **Local-only option.** Point `NIM_BASE_URL` at a self-hosted NIM or Ollama endpoint for zero egress.
 - **Ledger.** Every call appends a JSONL record (model, tokens, latency, judge score, escalation) to `~/.frugal-agents/ledger.jsonl`, so savings are measured, not guessed. Records carry a schema version, are serialized with a file lock across processes, rotate at 10 MB, and never contain prompt or answer text. Disable with `FRUGAL_NO_LEDGER=1`.
+- **Honest completion signal.** `free_agent` diffs `git status --porcelain` before and after the call and returns `changed_during_call` plus a `warnings` list, so a confident one-line answer that changed nothing is reported as a failed delegation instead of a success.
+- **Reuse-first ladder (optional, measured negative for code repair).** `FRUGAL_LADDER=1` prepends five work rules (reuse before writing, stdlib before dependencies, minimum that works, never cut correctness, never truncate) to generator prompts — never to the judge. The A/B on T1 patch synthesis measured the opposite of the hypothesis: output tokens +34% to +127%, median latency +50% to +185%, success 12/12 → 10/12. The flag stays off by default and ships as an experiment for other task shapes; see [`bench/results/2026-10-21-t1-ladder/`](bench/results/2026-10-21-t1-ladder/).
 - **Known limits.** Redaction is best-effort, the worker is not sandboxed, and the ledger is local observability rather than an audit trail. See [`SECURITY.md`](SECURITY.md).
 
 ---

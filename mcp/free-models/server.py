@@ -123,6 +123,35 @@ Scoring guide:
 Reject when the answer would need a human to repair it before use.
 Be strict about correctness, but do not invent requirements that are not in the task."""
 
+# Optional reuse-first preamble (FRUGAL_LADDER=1), adapted from the YAGNI
+# "ladder" pattern: prefer reuse, stdlib, and the minimum that works, without
+# ever cutting correctness. It is prepended to GENERATOR prompts only — never
+# to the judge, whose rubric must stay independent of output style.
+LADDER_PREAMBLE = (
+    "Work rules (read first):\n"
+    "1. Reuse before writing: prefer an existing helper in this file or "
+    "repository over adding a new one.\n"
+    "2. Prefer the standard library over adding a dependency.\n"
+    "3. Write the minimum that fully solves the task; no speculative "
+    "generality, no unused options.\n"
+    "4. Never trade correctness for brevity: validation, error handling and "
+    "the exact behavior the task demands always stay.\n"
+    "5. Brevity never means truncation: when a complete function or object is "
+    "required, return all of it.\n"
+)
+
+
+def ladder_enabled() -> bool:
+    """Whether the reuse-first preamble is active (FRUGAL_LADDER=1)."""
+    return os.environ.get("FRUGAL_LADDER", "").strip() == "1"
+
+
+def apply_ladder(task: str) -> str:
+    """Prepend the ladder preamble to a generator prompt when enabled."""
+    if ladder_enabled() and task:
+        return LADDER_PREAMBLE + "\n" + task
+    return task
+
 
 class FrugalError(RuntimeError):
     """Fatal error: bad configuration, missing key, unusable response."""
@@ -677,6 +706,7 @@ def complete(
                             "usage": result["usage"],
                             "latency_ms": result["latency_ms"],
                             "fallbacks": len(failures),
+                            "ladder": ladder_enabled(),
                         }
                     )
                 return result
@@ -709,7 +739,7 @@ def free_ask(
     cancel_event: threading.Event | None = None,
 ) -> dict[str, Any]:
     result = complete(
-        prompt,
+        apply_ladder(prompt),
         model=model,
         max_tokens=max_tokens,
         temperature=temperature,
@@ -764,7 +794,7 @@ def free_cascade(
     started = time.time()
     threshold = max(0.0, min(1.0, float(threshold)))
     generated = complete(
-        task,
+        apply_ladder(task),
         model=generator,
         max_tokens=max_tokens,
         cancel_event=cancel_event,
@@ -822,6 +852,7 @@ def free_cascade(
             "accepted": accepted,
             "escalate_to_paid": not accepted,
             "latency_ms": result["latency_ms"],
+            "ladder": ladder_enabled(),
         }
     )
     return result
@@ -932,7 +963,7 @@ def free_agent(
     try:
         if proc.stdin is not None:
             try:
-                proc.stdin.write(redact(task))
+                proc.stdin.write(redact(apply_ladder(task)))
                 proc.stdin.close()
             except (BrokenPipeError, OSError):
                 pass
@@ -1001,6 +1032,7 @@ def free_agent(
             "returncode": proc.returncode,
             "chars": len(output),
             "changed": len(changed_during_call),
+            "ladder": ladder_enabled(),
         }
     )
     return {
@@ -1378,6 +1410,13 @@ def doctor() -> int:
     except FrugalError as error:
         report(False, "NIM key", str(error))
         key = ""
+
+    report(
+        True,
+        "ladder preamble",
+        "on (FRUGAL_LADDER=1)" if ladder_enabled() else "off (FRUGAL_LADDER=1 to enable)",
+        warn=True,
+    )
 
     catalog: set[str] = set()
     if key:

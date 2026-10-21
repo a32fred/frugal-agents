@@ -32,6 +32,7 @@ Properties:
 - **Independent judge.** Different model family from the generator, temperature 0, structured JSON verdict. The server excludes the generator from the judge call and flags `judge_independent: false` when no alternative model exists.
 - **Evidence-carrying escalation.** The paid model sees a compact package, not the conversation. This caps handoff cost at roughly 10% of the saved tokens.
 - **No silent downgrade.** T2 work never enters the free path, regardless of judge score.
+- **Actionable `issues`.** Each rejected answer's `issues` list should read like a page from the engineer who gets paged: what the code does now, what breaks because of it, how to fix it, and what happens if you skip the fix. "Style" alone is a score problem (0.7), not an issue entry — issues exist to be handed to the paid tier.
 
 ## 3. Why a judge at all?
 

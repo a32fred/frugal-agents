@@ -60,6 +60,8 @@ def _run_tests(
 ) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     env["PYTHONPATH"] = str(workdir) + os.pathsep + env.get("PYTHONPATH", "")
+    # Hidden suites must grade the code, not ambient server feature flags.
+    env.pop("FRUGAL_LADDER", None)
     try:
         return subprocess.run(
             [
@@ -591,6 +593,7 @@ def run_benchmark(
                 task["id"]: task.get("max_tokens", task.get("patch_max_tokens", 3000))
                 for task in tasks
             },
+            "ladder": os.environ.get("FRUGAL_LADDER", "") == "1",
             "python": sys.version.split()[0],
             "platform": sys.platform,
             "seed": seed,

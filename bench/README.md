@@ -189,6 +189,16 @@ Proportions use a 95% Wilson interval. The pilot does not report p-values.
 Cache hit rate is not a dollar saving: free NIM calls have no per-token price
 in this benchmark.
 
+## Follow-up: the reuse-first ladder, measured
+
+The "lazy senior dev" ladder idea (adapted from Ponytail, MIT) was implemented
+behind `FRUGAL_LADDER=1` and A/B-tested on the 6 T1 tasks (12 calls). Result:
+**negative** — output tokens +34% (`free_ask`) and +127% (`free_cascade`),
+median latency up ~2–3x, success 12/12 → 10/12. Reasoning models deliberate
+about style rules instead of saving tokens. The flag ships off by default;
+full data and caveats in
+[`results/2026-10-21-t1-ladder/`](results/2026-10-21-t1-ladder/README.md).
+
 ## Interpreting the result
 
 Use the report as a calibration instrument, not a leaderboard:

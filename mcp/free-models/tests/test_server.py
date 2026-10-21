@@ -402,7 +402,9 @@ class TestFreeAgentStdin(unittest.TestCase):
 
         self.assertEqual(captured["command"][0], "opencode")
         self.assertNotIn("SECRET_TASK_TEXT", captured["command"])
-        self.assertEqual(captured["stdin_text"], "SECRET_TASK_TEXT")
+        # endsWith (not equality): with FRUGAL_LADDER=1 the task is preceded by
+        # the reuse-first preamble; what must hold is task-on-stdin, not bytes.
+        self.assertTrue(str(captured["stdin_text"]).endswith("SECRET_TASK_TEXT"))
         self.assertEqual(result["answer"], "DONE")
 
     def test_relative_cwd_is_rejected(self) -> None:
@@ -669,6 +671,141 @@ class TestMcpProtocol(unittest.TestCase):
         reply = json.loads(proc.stdout.strip())
         self.assertTrue(reply["result"]["isError"])
         self.assertIn("unknown tool", reply["result"]["content"][0]["text"])
+
+
+class TestLadder(unittest.TestCase):
+    """The reuse-first preamble (FRUGAL_LADDER=1) reaches generators, not the judge."""
+
+    def _fake_complete(self, calls, generator_model="gen/model", judge_model="judge/model"):
+        original = server.complete
+
+        def fake_complete(
+            prompt,
+            model=None,
+            system=None,
+            max_tokens=2048,
+            temperature=0.2,
+            reasoning_effort=None,
+            exclude_models=None,
+            cancel_event=None,
+            record_call=True,
+        ):
+            calls.append(
+                {
+                    "prompt": prompt,
+                    "system": system,
+                    "exclude_models": exclude_models,
+                }
+            )
+            is_judge = system is server.JUDGE_SYSTEM
+            return {
+                "text": (
+                    '{"score": 1.0, "verdict": "accept", "issues": []}'
+                    if is_judge
+                    else "answer"
+                ),
+                "model": judge_model if is_judge else generator_model,
+                "usage": server.normalize_usage(None),
+                "latency_ms": 1,
+                "fallbacks": 0,
+            }
+
+        server.complete = fake_complete
+        return original
+
+    def test_off_by_default_prompt_is_unchanged(self) -> None:
+        os.environ.pop("FRUGAL_LADDER", None)
+        calls: list[dict[str, object]] = []
+        original = self._fake_complete(calls)
+        os.environ["FRUGAL_NO_LEDGER"] = "1"
+        try:
+            result = server.free_ask("write a slugify function")
+        finally:
+            server.complete = original
+            os.environ.pop("FRUGAL_NO_LEDGER", None)
+        self.assertEqual(result["answer"], "answer")
+        self.assertNotIn("Work rules (read first)", calls[0]["prompt"])
+        self.assertFalse(server.ladder_enabled())
+
+    def test_on_prepends_preamble_to_free_ask(self) -> None:
+        os.environ["FRUGAL_LADDER"] = "1"
+        calls: list[dict[str, object]] = []
+        original = self._fake_complete(calls)
+        os.environ["FRUGAL_NO_LEDGER"] = "1"
+        try:
+            server.free_ask("write a slugify function")
+        finally:
+            server.complete = original
+            os.environ.pop("FRUGAL_NO_LEDGER", None)
+            os.environ.pop("FRUGAL_LADDER", None)
+        self.assertTrue(server.LADDER_PREAMBLE.startswith("Work rules"))
+        self.assertTrue(str(calls[0]["prompt"]).startswith(server.LADDER_PREAMBLE))
+        self.assertIn("write a slugify function", calls[0]["prompt"])
+
+    def test_judge_prompt_is_never_laddered(self) -> None:
+        os.environ["FRUGAL_LADDER"] = "1"
+        calls: list[dict[str, object]] = []
+        original = self._fake_complete(calls)
+        os.environ["FRUGAL_NO_LEDGER"] = "1"
+        try:
+            result = server.free_cascade("implement the parser")
+        finally:
+            server.complete = original
+            os.environ.pop("FRUGAL_NO_LEDGER", None)
+            os.environ.pop("FRUGAL_LADDER", None)
+        self.assertIn("Work rules (read first)", calls[0]["prompt"])
+        self.assertNotIn("Work rules (read first)", calls[1]["prompt"])
+        self.assertIn("implement the parser", calls[1]["prompt"])
+        self.assertTrue(result["judge_independent"])
+
+    def test_free_agent_stdin_receives_preamble(self) -> None:
+        captured: dict[str, object] = {}
+
+        class RecordingStdin(io.StringIO):
+            def close(self) -> None:
+                captured["stdin_text"] = self.getvalue()
+                super().close()
+
+        class FakeProc:
+            returncode = 0
+            pid = 999999
+
+            def __init__(self, command, **kwargs):
+                captured["command"] = command
+                self.stdin = RecordingStdin()
+                self.stdout = io.StringIO(
+                    '{"type": "text", "part": {"type": "text", "text": "DONE"}}\n'
+                )
+                self.stderr = io.StringIO("")
+
+            def poll(self):
+                return 0
+
+            def wait(self, timeout=None):
+                return 0
+
+            def kill(self):
+                pass
+
+        os.environ["FRUGAL_LADDER"] = "1"
+        original_popen = server.subprocess.Popen
+        original_which = server.shutil.which
+        original_porcelain = server._porcelain_lines
+        os.environ["FRUGAL_NO_LEDGER"] = "1"
+        server.subprocess.Popen = FakeProc
+        server.shutil.which = lambda name: "/usr/bin/opencode"
+        server._porcelain_lines = lambda path: []
+        try:
+            server.free_agent("edit the file", cwd="/tmp")
+        finally:
+            server.subprocess.Popen = original_popen
+            server.shutil.which = original_which
+            server._porcelain_lines = original_porcelain
+            os.environ.pop("FRUGAL_NO_LEDGER", None)
+            os.environ.pop("FRUGAL_LADDER", None)
+        stdin_text = str(captured["stdin_text"])
+        self.assertTrue(stdin_text.startswith(server.LADDER_PREAMBLE))
+        self.assertIn("edit the file", stdin_text)
 
 
 if __name__ == "__main__":

@@ -14,6 +14,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - `bench/PREREGISTRATION.md` with frozen hypotheses, sampling plan, analysis rules, and deviation log.
 - Harness unit tests (12) in `bench/tests/` and a CI validation job that needs no API key.
 - `bench/run.py --resume`: interrupted free-tier runs can be continued without overwriting completed rows.
+- Reuse-first ladder behind `FRUGAL_LADDER=1`: prepends work rules (reuse, stdlib, minimum, never cut correctness, never truncate) to generator prompts only — never the judge. Ledger records carry a `ladder` flag; `doctor` shows the state. Hidden test suites in the bench are insulated from the flag so grades measure code, not ambient config. A/B on T1 measured it **negative** (+34% to +127% output tokens, ~2–3x latency); the flag stays opt-in and off by default.
 - `bench/b_run.py`: Bench B runner for the paid vs routed trade-off on the subscription-backed `codex` CLI (`--validate-only` proves each task is broken and solvable without any model call).
 - `bench/BENCH_B.md`: Bench B pre-registration with the operator's real paid tiering as the baseline.
 

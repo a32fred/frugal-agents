@@ -1,0 +1,25 @@
+{
+  "run_id": "2026-10-21-t1-ladder",
+  "started_at": "2026-10-21T20:05:34Z",
+  "bench_version": "0.1.0",
+  "server_version": "0.3.1",
+  "git_commit": "bbea1d7b61bb94ff20880dce40bbd1685c46364a",
+  "git_dirty": true,
+  "task_count": 6,
+  "text_reps": 2,
+  "code_reps": 1,
+  "arms": null,
+  "task_max_tokens": {
+    "t1_openai_cache_dropped": 3000,
+    "t1_anthropic_prompt_dropped": 3000,
+    "t1_merge_usage_last_wins": 3000,
+    "t1_threshold_ignored": 3000,
+    "t1_chain_dedup_removed": 3000,
+    "t1_stats_accepted_wrong": 3000
+  },
+  "ladder": true,
+  "python": "3.14.7",
+  "platform": "linux",
+  "seed": 20261020,
+  "finished_at": "2026-10-21T20:36:13Z"
+}
