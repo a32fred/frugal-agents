@@ -387,14 +387,17 @@ class TestFreeAgentStdin(unittest.TestCase):
 
         original_popen = server.subprocess.Popen
         original_which = server.shutil.which
+        original_porcelain = server._porcelain_lines
         os.environ["FRUGAL_NO_LEDGER"] = "1"
         server.subprocess.Popen = FakeProc
         server.shutil.which = lambda name: "/usr/bin/opencode"
+        server._porcelain_lines = lambda path: []
         try:
             result = server.free_agent("SECRET_TASK_TEXT", cwd="/tmp")
         finally:
             server.subprocess.Popen = original_popen
             server.shutil.which = original_which
+            server._porcelain_lines = original_porcelain
             os.environ.pop("FRUGAL_NO_LEDGER", None)
 
         self.assertEqual(captured["command"][0], "opencode")
@@ -405,6 +408,81 @@ class TestFreeAgentStdin(unittest.TestCase):
     def test_relative_cwd_is_rejected(self) -> None:
         with self.assertRaises(server.FrugalError):
             server.free_agent("x", cwd="relative/path")
+
+    def _run_with_fake_output(
+        self,
+        answer: str,
+        cwd: str | None = None,
+        porcelain=None,
+    ) -> dict:
+        class FakeProc:
+            returncode = 0
+            pid = 999999
+
+            def __init__(self, command, **kwargs):
+                self.stdin = io.StringIO()
+                self.stdout = io.StringIO(
+                    '{"type": "text", "part": {"type": "text", "text": '
+                    + json.dumps(answer)
+                    + "}}\n"
+                )
+                self.stderr = io.StringIO("")
+
+            def poll(self):
+                return 0
+
+            def wait(self, timeout=None):
+                return 0
+
+            def kill(self):
+                pass
+
+        original_popen = server.subprocess.Popen
+        original_which = server.shutil.which
+        original_porcelain = server._porcelain_lines
+        os.environ["FRUGAL_NO_LEDGER"] = "1"
+        server.subprocess.Popen = FakeProc
+        server.shutil.which = lambda name: "/usr/bin/opencode"
+        # FakeProc replaces subprocess.Popen module-wide, which would also break
+        # the real `git status` call inside _porcelain_lines.
+        server._porcelain_lines = porcelain or (lambda path: [])
+        try:
+            return server.free_agent("task", cwd=cwd)
+        finally:
+            server.subprocess.Popen = original_popen
+            server.shutil.which = original_which
+            server._porcelain_lines = original_porcelain
+            os.environ.pop("FRUGAL_NO_LEDGER", None)
+
+    def test_short_answer_without_changes_warns(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self._run_with_fake_output("Let's just open the file.", cwd=tmp)
+        self.assertEqual(result["changed_during_call"], [])
+        self.assertTrue(result["warnings"])
+        self.assertEqual(result["chars"], len("Let's just open the file."))
+
+    def test_long_answer_without_changes_does_not_warn(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self._run_with_fake_output("x" * 250, cwd=tmp)
+        self.assertEqual(result["warnings"], [])
+
+    def test_changed_during_call_is_reported_without_warning(self) -> None:
+        sequence = {"calls": 0}
+
+        def fake_porcelain(path):
+            sequence["calls"] += 1
+            if sequence["calls"] == 1:
+                return [" M internal/a.go"]
+            return [" M internal/a.go", "?? internal/b.go"]
+
+        result = self._run_with_fake_output("Done.", cwd="/tmp", porcelain=fake_porcelain)
+        self.assertEqual(result["changed_during_call"], ["?? internal/b.go"])
+        self.assertEqual(result["warnings"], [])
+
+    def test_porcelain_lines_return_empty_outside_git(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(server._porcelain_lines(tmp), [])
+        self.assertEqual(server._porcelain_lines(None), [])
 
     def test_missing_cwd_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

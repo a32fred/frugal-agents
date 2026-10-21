@@ -838,6 +838,25 @@ def _terminate(proc: subprocess.Popen) -> None:
         pass
 
 
+def _porcelain_lines(cwd: str | None) -> list[str]:
+    """One `git status --porcelain` line per dirty path, or [] if unavailable."""
+    if not cwd:
+        return []
+    try:
+        proc = subprocess.run(
+            ["git", "-C", cwd, "status", "--porcelain", "--", "."],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    if proc.returncode != 0:
+        return []
+    return [line for line in proc.stdout.splitlines() if line.strip()]
+
+
 def free_agent(
     task: str,
     model: str | None = None,
@@ -885,6 +904,7 @@ def free_agent(
         popen_kwargs["creationflags"] = getattr(
             subprocess, "CREATE_NEW_PROCESS_GROUP", 0
         )
+    worktree_before = set(_porcelain_lines(cwd))
 
     try:
         proc = subprocess.Popen(command, **popen_kwargs)
@@ -962,6 +982,17 @@ def free_agent(
             f"opencode exited with {proc.returncode}: {stderr.strip()[:400]}"
         )
 
+    # Attribution is best effort: a dirty worktree may have pre-existing
+    # changes, so only report status lines that appeared during this call.
+    worktree_after = set(_porcelain_lines(cwd)) if cwd else set()
+    changed_during_call = sorted(worktree_after - worktree_before)
+    warnings: list[str] = []
+    if len(output) < 200 and not changed_during_call:
+        warnings.append(
+            "answer is short and no worktree files changed during the call; "
+            "treat as a failed delegation if the task required edits"
+        )
+
     record(
         {
             "tool": "free_agent",
@@ -969,6 +1000,7 @@ def free_agent(
             "cwd": cwd,
             "returncode": proc.returncode,
             "chars": len(output),
+            "changed": len(changed_during_call),
         }
     )
     return {
@@ -976,6 +1008,9 @@ def free_agent(
         "model": selected,
         "returncode": proc.returncode,
         "stderr": stderr.strip()[-400:],
+        "chars": len(output),
+        "changed_during_call": changed_during_call[:20],
+        "warnings": warnings,
     }
 
 
