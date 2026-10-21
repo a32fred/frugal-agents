@@ -1,0 +1,155 @@
+{
+  "run_id": "2026-10-21-t1-ladder",
+  "started_at": "2026-10-21T20:05:34Z",
+  "finished_at": "2026-10-21T20:36:13Z",
+  "git_commit": "bbea1d7b61bb94ff20880dce40bbd1685c46364a",
+  "server_version": "0.3.1",
+  "n": 12,
+  "overall": {
+    "successes": 10,
+    "n": 12,
+    "rate": 0.8333,
+    "ci95": [
+      0.552,
+      0.953
+    ],
+    "delivered": 10,
+    "delivered_rate": 0.8333
+  },
+  "by_tier": {
+    "T1": {
+      "successes": 10,
+      "n": 12,
+      "rate": 0.8333,
+      "ci95": [
+        0.552,
+        0.953
+      ],
+      "delivered": 10,
+      "delivered_rate": 0.8333
+    }
+  },
+  "by_arm": {
+    "T1/free_ask": {
+      "successes": 5,
+      "n": 6,
+      "rate": 0.8333,
+      "ci95": [
+        0.4365,
+        0.9699
+      ],
+      "delivered": 5,
+      "delivered_rate": 0.8333,
+      "latency": {
+        "median_ms": 77408,
+        "p95_ms": 294356,
+        "max_ms": 294356
+      },
+      "usage": {
+        "prompt_tokens": 4453,
+        "completion_tokens": 10644,
+        "cached_tokens": 0,
+        "cache_write_tokens": 0,
+        "cache_hit_rate": 0.0
+      }
+    },
+    "T1/free_cascade": {
+      "successes": 5,
+      "n": 6,
+      "rate": 0.8333,
+      "ci95": [
+        0.4365,
+        0.9699
+      ],
+      "delivered": 5,
+      "delivered_rate": 0.8333,
+      "latency": {
+        "median_ms": 189655,
+        "p95_ms": 230824,
+        "max_ms": 230824
+      },
+      "usage": {
+        "prompt_tokens": 9219,
+        "completion_tokens": 19354,
+        "cached_tokens": 896,
+        "cache_write_tokens": 0,
+        "cache_hit_rate": 0.0972
+      }
+    }
+  },
+  "by_split": {
+    "core": {
+      "successes": 10,
+      "n": 12,
+      "rate": 0.8333,
+      "ci95": [
+        0.552,
+        0.953
+      ]
+    }
+  },
+  "judge": {
+    "n": 0,
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "tn": 0,
+    "precision": 0.0,
+    "recall": 0.0,
+    "false_accept_rate": 0.0,
+    "false_accept_given_wrong": 0.0,
+    "escalation_rate": 0.0
+  },
+  "judge_stress": {
+    "n": 0,
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "tn": 0,
+    "precision": 0.0,
+    "recall": 0.0,
+    "false_accept_rate": 0.0,
+    "false_accept_given_wrong": 0.0,
+    "escalation_rate": 0.0
+  },
+  "paired_t0": {
+    "both_correct": 0,
+    "ask_only_correct": 0,
+    "cascade_only_correct": 0,
+    "neither_correct": 0,
+    "paired_reps": 0
+  },
+  "usage": {
+    "prompt_tokens": 13672,
+    "completion_tokens": 29998,
+    "cached_tokens": 896,
+    "cache_write_tokens": 0,
+    "cache_hit_rate": 0.0655
+  },
+  "errors": 2,
+  "metadata": {
+    "run_id": "2026-10-21-t1-ladder",
+    "started_at": "2026-10-21T20:05:34Z",
+    "bench_version": "0.1.0",
+    "server_version": "0.3.1",
+    "git_commit": "bbea1d7b61bb94ff20880dce40bbd1685c46364a",
+    "git_dirty": true,
+    "task_count": 6,
+    "text_reps": 2,
+    "code_reps": 1,
+    "arms": null,
+    "task_max_tokens": {
+      "t1_openai_cache_dropped": 3000,
+      "t1_anthropic_prompt_dropped": 3000,
+      "t1_merge_usage_last_wins": 3000,
+      "t1_threshold_ignored": 3000,
+      "t1_chain_dedup_removed": 3000,
+      "t1_stats_accepted_wrong": 3000
+    },
+    "ladder": true,
+    "python": "3.14.7",
+    "platform": "linux",
+    "seed": 20261020,
+    "finished_at": "2026-10-21T20:36:13Z"
+  }
+}

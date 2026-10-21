@@ -14,7 +14,7 @@ Most agent traffic is not hard. Commit messages, summaries, docstrings, regexes,
 
 This repository contains the research, the playbook of failure modes, and a working **zero-dependency MCP server** that plugs into Codex CLI, Claude Code, or any MCP client.
 
-> **Project status: experimental (v0.3.1).** This is a research prototype and reference implementation, not a turnkey product. The server, the judge-independence guard, cancellation, the ledger and the test suite are real. The savings are not yet benchmarked on a public task set, and only Codex CLI has been tested end-to-end. Read [Status & maturity](#status--maturity) and the [harness compatibility matrix](docs/07-harness-compatibility.md) before deploying it.
+> **Project status: experimental (v0.3.1).** This is a research prototype and reference implementation, not a turnkey product. The server, the judge-independence guard, cancellation, the ledger, the test suite and a free-model quality/judge pilot are real. A **paid savings benchmark has not run**, and only Codex CLI has been tested end-to-end. Read [Status & maturity](#status--maturity) and the [harness compatibility matrix](docs/07-harness-compatibility.md) before deploying it.
 
 ---
 
@@ -103,6 +103,15 @@ frugal-agents/
 │   ├── 05-token-glossary.md billing and architecture terms, provider cheat sheet
 │   ├── 06-prompt-caching.md KV cache mechanics, hit-rate math, anti-patterns
 │   └── 07-harness-compatibility.md  protocol revisions, client configs, tested/untested matrix
+├── bench/
+│   ├── README.md            methodology, metrics, reproduction, limitations
+│   ├── PREREGISTRATION.md   hypotheses and analysis frozen before the pilot
+│   ├── tasks.py             T0/T1/T2 tasks, real mutations, visible tests
+│   ├── graders.py           deterministic oracles (no LLM grading)
+│   ├── runner.py            free arms, patch insertion, hidden-suite grading
+│   ├── report.py            Wilson intervals, judge confusion, Markdown
+│   ├── run.py               CLI (--list, --validate-only, run)
+│   └── results/             published run artifacts
 ├── SECURITY.md              threat model, reporting, deployment limits
 └── mcp/free-models/
     ├── server.py            MCP stdio server — Python stdlib only
@@ -169,7 +178,13 @@ Then add the routing policy from [`routing-policy.md`](mcp/free-models/routing-p
   "answer": "git log -3 --oneline",
   "generator": "openai/gpt-oss-20b",
   "judge": "google/gemma-4-31b-it",
-  "escalate_to_paid": false
+  "escalate_to_paid": false,
+  "usage": {
+    "prompt_tokens": 439,
+    "completion_tokens": 182,
+    "cached_tokens": 0,
+    "total_tokens": 621
+  }
 }
 ```
 
@@ -198,13 +213,17 @@ The rule behind the table: **the paid model decides and reviews; free models pro
 - **Task text is not in the process list.** `free_agent` writes the task to the worker's stdin instead of argv; cancelling the MCP request terminates the worker's process group.
 - **Local-only option.** Point `NIM_BASE_URL` at a self-hosted NIM or Ollama endpoint for zero egress.
 - **Ledger.** Every call appends a JSONL record (model, tokens, latency, judge score, escalation) to `~/.frugal-agents/ledger.jsonl`, so savings are measured, not guessed. Records carry a schema version, are serialized with a file lock across processes, rotate at 10 MB, and never contain prompt or answer text. Disable with `FRUGAL_NO_LEDGER=1`.
+- **Honest completion signal.** `free_agent` diffs `git status --porcelain` before and after the call and returns `changed_during_call` plus a `warnings` list, so a confident one-line answer that changed nothing is reported as a failed delegation instead of a success.
+- **Reuse-first ladder (optional, measured negative for code repair).** `FRUGAL_LADDER=1` prepends five work rules (reuse before writing, stdlib before dependencies, minimum that works, never cut correctness, never truncate) to generator prompts — never to the judge. The A/B on T1 patch synthesis measured the opposite of the hypothesis: output tokens +34% to +127%, median latency +50% to +185%, success 12/12 → 10/12. The flag stays off by default and ships as an experiment for other task shapes; see [`bench/results/2026-10-21-t1-ladder/`](bench/results/2026-10-21-t1-ladder/).
 - **Known limits.** Redaction is best-effort, the worker is not sandboxed, and the ledger is local observability rather than an audit trail. See [`SECURITY.md`](SECURITY.md).
 
 ---
 
 ## Expected savings (hypothesis, not a published benchmark)
 
-Published cascades report large savings, but **this repository has not benchmarked them on a public task set yet**. The table below is a hypothesis to test against your own paid-token baseline, not a result.
+Published cascades report large savings, but **this repository has not run a paid before/after benchmark on a public task set**. The table below is a hypothesis to test against your own paid-token baseline, not a result.
+
+The free-only pilot in [`bench/`](bench/) measured that precondition and found the free tier strong on routine text and isolated code repair (87% T0, 12/12 T1) but weak on the policy screens (2/8). It does not produce a USD number, because no paid baseline or dated price table has been approved.
 
 Savings = share of tokens moved to free models × (1 − handoff overhead ≈ 10%).
 
@@ -246,14 +265,18 @@ Experimental, pre-1.0. The v0.3.x hardening work removed defects that made unatt
 | Reliability | 429/5xx backoff with jitter, model cooldown, ledger schema/lock/rotation | unit tests |
 | Harnesses | Codex CLI tested; other clients documented but untested | [`docs/07-harness-compatibility.md`](docs/07-harness-compatibility.md) |
 | Security | redaction and policy; the worker is not sandboxed | [`SECURITY.md`](SECURITY.md) |
+| Quality/judge calibration | free-only pilot completed; paid pilot not run | [`bench/`](bench/) |
 | Savings | instrumented, not benchmarked | roadmap Phase 0 |
 
 **What v1.0 still requires:**
 
-- A golden-task evaluation set with human labels and published judge precision/recall.
+- A golden-task evaluation set with programmatic oracles and published judge
+  precision/recall; the free pilot is the first slice, but it is not a
+  human-labeled safety evaluation.
+- A paid before/after token and cost benchmark on a reproducible repository,
+  with a dated price table and a confidence interval.
 - End-to-end tests on at least Codex, Claude Code, Cursor and OpenCode.
 - Packaging (`uvx` and Docker) and Windows CI.
-- A published before/after token and cost benchmark on a reproducible repository.
 - The stateless `2026-07-28` MCP revision, or an explicit decision to stay on the legacy session protocol.
 
 Until then, treat this as a reference implementation: useful, measured locally, and not a drop-in replacement for your paid model.
@@ -269,12 +292,13 @@ Until then, treat this as a reference implementation: useful, measured locally, 
 - [x] Token glossary and prompt-caching guide
 - [x] Hardening: judge guard, threshold fix, stdin task handoff, concurrency/cancellation, backoff, ledger lock/rotation, `doctor`
 - [x] Harness compatibility matrix and official MCP SDK smoke test
+- [x] Free-model benchmark harness (T0/T1/T2) with deterministic oracles and judge confusion metrics
+- [ ] Paid agentic benchmark (all-paid vs routed) and savings report
+- [ ] Human-labeled safety evaluation and expanded judge calibration
 - [ ] Per-task-type judge checklists and tuned thresholds
-- [ ] Golden-task eval set and judge precision/recall
 - [ ] Parallel worker recipe (paid coordinator + free workers in worktrees)
 - [ ] Packaging (`uvx`/Docker) and Windows CI
 - [ ] Optional Responses↔Chat proxy profile for Codex
-- [ ] Benchmark harness that reports real savings per repository
 
 See [`docs/04-roadmap.md`](docs/04-roadmap.md) for acceptance criteria.
 

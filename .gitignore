@@ -14,3 +14,8 @@ secrets/
 ledger.jsonl
 *.log
 .DS_Store
+
+# benchmark scratch space; published summaries/results are kept
+bench/results/*/work/
+bench/results/*/ledger.jsonl
+bench/results/*/ledger.jsonl.*

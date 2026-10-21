@@ -1,0 +1,10 @@
+{
+  "_comment": "Bench B shadow price table. Fill from the provider's dated API price page. Units: USD per 1M tokens. Shadow USD is computed ONLY when every required field for a model is non-null; otherwise the runner reports tokens and leaves USD null. A subscription consumes quota, not dollars; this table exists to translate token savings into an approximate dollar figure and must never be presented as a bill.",
+  "as_of": null,
+  "currency": "USD",
+  "per_1m": {
+    "gpt-5.6-sol": {"input": null, "cached_input": null, "output": null, "reasoning_output": null},
+    "gpt-6.1-sol": {"input": null, "cached_input": null, "output": null, "reasoning_output": null},
+    "gpt-6-astra": {"input": null, "cached_input": null, "output": null, "reasoning_output": null}
+  }
+}

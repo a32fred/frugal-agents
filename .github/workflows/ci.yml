@@ -44,6 +44,21 @@ jobs:
       - name: SDK handshake and tool listing
         run: python mcp/free-models/tests/mcp_sdk_smoke.py
 
+  bench:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Benchmark harness unit tests
+        run: python -m unittest discover -s bench/tests -p "test_*.py" -v
+
+      - name: Validate task references and real mutations (no API key)
+        run: python -m bench.run --validate-only
+
   smoke:
     runs-on: ubuntu-latest
     # Live calls need a key; forks and PRs run without one and skip cleanly.

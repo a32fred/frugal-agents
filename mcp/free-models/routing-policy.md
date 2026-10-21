@@ -36,6 +36,11 @@ Rules:
 1. Pass an absolute `cwd`. Never let a worker guess the repository.
 2. The task statement must contain the spec, not a reference to the conversation.
 3. Review the diff yourself before accepting it. A passing judge is not a code review.
+4. Check the completion signal, not the prose. `free_agent` returns
+   `changed_during_call` and a `warnings` list. A short answer with no changed
+   files is a **failed delegation**: retry with a larger `timeout` (>= 300 for
+   agentic edits), switch to `free_cascade` for single-function patches, or do
+   the work on the paid model. `returncode 0` only means the worker exited.
 
 ### T2 — keep on the paid model
 

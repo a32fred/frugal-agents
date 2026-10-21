@@ -1,0 +1,246 @@
+{
+  "run_id": "2026-10-20-pilot",
+  "started_at": "2026-10-20T13:45:19Z",
+  "finished_at": "2026-10-20T14:15:48Z",
+  "git_commit": "634ee92c3b735f903be3a690a0c3d6d3a4884456",
+  "server_version": "0.3.1",
+  "n": 66,
+  "overall": {
+    "successes": 52,
+    "n": 66,
+    "rate": 0.7879,
+    "ci95": [
+      0.6749,
+      0.8692
+    ],
+    "delivered": 46,
+    "delivered_rate": 0.697
+  },
+  "by_tier": {
+    "T0": {
+      "successes": 39,
+      "n": 46,
+      "rate": 0.8478,
+      "ci95": [
+        0.7178,
+        0.9243
+      ],
+      "delivered": 37,
+      "delivered_rate": 0.8043
+    },
+    "T1": {
+      "successes": 9,
+      "n": 12,
+      "rate": 0.75,
+      "ci95": [
+        0.4677,
+        0.9111
+      ],
+      "delivered": 9,
+      "delivered_rate": 0.75
+    },
+    "T2": {
+      "successes": 4,
+      "n": 8,
+      "rate": 0.5,
+      "ci95": [
+        0.2152,
+        0.7848
+      ],
+      "delivered": 0,
+      "delivered_rate": 0.0
+    }
+  },
+  "by_arm": {
+    "T0/free_ask": {
+      "successes": 19,
+      "n": 23,
+      "rate": 0.8261,
+      "ci95": [
+        0.6286,
+        0.9302
+      ],
+      "delivered": 19,
+      "delivered_rate": 0.8261,
+      "latency": {
+        "median_ms": 8299,
+        "p95_ms": 23050,
+        "max_ms": 36672
+      },
+      "usage": {
+        "prompt_tokens": 3005,
+        "completion_tokens": 7774,
+        "cached_tokens": 0,
+        "cache_write_tokens": 0,
+        "cache_hit_rate": 0.0
+      }
+    },
+    "T0/free_cascade": {
+      "successes": 20,
+      "n": 23,
+      "rate": 0.8696,
+      "ci95": [
+        0.6787,
+        0.9546
+      ],
+      "delivered": 18,
+      "delivered_rate": 0.7826,
+      "latency": {
+        "median_ms": 18609,
+        "p95_ms": 80589,
+        "max_ms": 382785
+      },
+      "usage": {
+        "prompt_tokens": 9263,
+        "completion_tokens": 7157,
+        "cached_tokens": 320,
+        "cache_write_tokens": 0,
+        "cache_hit_rate": 0.0345
+      }
+    },
+    "T1/free_ask": {
+      "successes": 5,
+      "n": 6,
+      "rate": 0.8333,
+      "ci95": [
+        0.4365,
+        0.9699
+      ],
+      "delivered": 5,
+      "delivered_rate": 0.8333,
+      "latency": {
+        "median_ms": 31144,
+        "p95_ms": 71696,
+        "max_ms": 71696
+      },
+      "usage": {
+        "prompt_tokens": 3889,
+        "completion_tokens": 5877,
+        "cached_tokens": 0,
+        "cache_write_tokens": 0,
+        "cache_hit_rate": 0.0
+      }
+    },
+    "T1/free_cascade": {
+      "successes": 4,
+      "n": 6,
+      "rate": 0.6667,
+      "ci95": [
+        0.3,
+        0.9032
+      ],
+      "delivered": 4,
+      "delivered_rate": 0.6667,
+      "latency": {
+        "median_ms": 37494,
+        "p95_ms": 45580,
+        "max_ms": 45580
+      },
+      "usage": {
+        "prompt_tokens": 11416,
+        "completion_tokens": 6950,
+        "cached_tokens": 0,
+        "cache_write_tokens": 0,
+        "cache_hit_rate": 0.0
+      }
+    },
+    "T2/free_cascade": {
+      "successes": 4,
+      "n": 8,
+      "rate": 0.5,
+      "ci95": [
+        0.2152,
+        0.7848
+      ],
+      "delivered": 0,
+      "delivered_rate": 0.0,
+      "latency": {
+        "median_ms": 31652,
+        "p95_ms": 37388,
+        "max_ms": 37388
+      },
+      "usage": {
+        "prompt_tokens": 3363,
+        "completion_tokens": 2753,
+        "cached_tokens": 320,
+        "cache_write_tokens": 0,
+        "cache_hit_rate": 0.0952
+      }
+    }
+  },
+  "by_split": {
+    "core": {
+      "successes": 47,
+      "n": 60,
+      "rate": 0.7833,
+      "ci95": [
+        0.6638,
+        0.8688
+      ]
+    },
+    "stress": {
+      "successes": 5,
+      "n": 6,
+      "rate": 0.8333,
+      "ci95": [
+        0.4365,
+        0.9699
+      ]
+    }
+  },
+  "judge": {
+    "n": 20,
+    "tp": 17,
+    "fp": 2,
+    "fn": 1,
+    "tn": 0,
+    "precision": 0.8947,
+    "recall": 0.9444,
+    "false_accept_rate": 0.1,
+    "false_accept_given_wrong": 1.0,
+    "escalation_rate": 0.05
+  },
+  "judge_stress": {
+    "n": 2,
+    "tp": 1,
+    "fp": 0,
+    "fn": 1,
+    "tn": 0,
+    "precision": 1.0,
+    "recall": 0.5,
+    "false_accept_rate": 0.0,
+    "false_accept_given_wrong": 0.0,
+    "escalation_rate": 0.5
+  },
+  "paired_t0": {
+    "both_correct": 15,
+    "ask_only_correct": 1,
+    "cascade_only_correct": 3,
+    "neither_correct": 1,
+    "paired_reps": 20
+  },
+  "usage": {
+    "prompt_tokens": 30936,
+    "completion_tokens": 30511,
+    "cached_tokens": 640,
+    "cache_write_tokens": 0,
+    "cache_hit_rate": 0.0207
+  },
+  "errors": 4,
+  "metadata": {
+    "run_id": "2026-10-20-pilot",
+    "started_at": "2026-10-20T13:45:19Z",
+    "bench_version": "0.1.0",
+    "server_version": "0.3.1",
+    "git_commit": "634ee92c3b735f903be3a690a0c3d6d3a4884456",
+    "git_dirty": true,
+    "task_count": 23,
+    "text_reps": 2,
+    "code_reps": 1,
+    "arms": null,
+    "python": "3.14.7",
+    "platform": "linux",
+    "seed": 20261020,
+    "finished_at": "2026-10-20T14:15:48Z"
+  }
+}
